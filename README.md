@@ -42,6 +42,7 @@ This is a Model Context Protocol (MCP) server implementation for Google Calendar
 - `get_event` - Get details for a specific event
 - `update_event` - Update an existing calendar event
 - `delete_event` - Delete a calendar event
+- `find_duplicates` - Identify potential duplicate events in your calendar
 
 ## Example Usage
 
@@ -113,6 +114,18 @@ This is a Model Context Protocol (MCP) server implementation for Google Calendar
   "action": "delete_event",
   "parameters": {
     "eventId": "event_id_here"
+  }
+}
+```
+
+### Find Duplicate Events
+```json
+{
+  "action": "find_duplicates",
+  "parameters": {
+    "timeMin": "2023-01-01T00:00:00Z",
+    "timeMax": "2023-12-31T23:59:59Z",
+    "similarityThreshold": 0.7
   }
 }
 ```

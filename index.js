@@ -182,6 +182,21 @@ app.get('/mcp/definition', (req, res) => {
           error_type: "Type of error that occurred (if failed)"
         },
         required_parameters: ["eventId"]
+      },
+      find_duplicates: {
+        description: "Identify potential duplicate events in the calendar",
+        parameters: {
+          timeMin: "ISO date string for the earliest event time (defaults to current time)",
+          timeMax: "ISO date string for the latest event time (defaults to 30 days from now)",
+          similarityThreshold: "Threshold for considering events as duplicates (0.0-1.0, defaults to 0.7)"
+        },
+        response: {
+          status: "success or error",
+          data: "Groups of potential duplicate events (if successful)",
+          error: "Error message (if failed)",
+          error_type: "Type of error that occurred (if failed)"
+        },
+        required_parameters: []
       }
     },
     error_types: {
@@ -326,6 +341,23 @@ app.post('/mcp/execute', async (req, res) => {
           });
         }
         result = await deleteEvent(calendar, parameters);
+        break;
+        
+      case 'find_duplicates':
+        // Check that similarity threshold is valid if provided
+        if (parameters && parameters.similarityThreshold !== undefined) {
+          const threshold = parseFloat(parameters.similarityThreshold);
+          if (isNaN(threshold) || threshold < 0 || threshold > 1) {
+            return res.json({
+              status: 'error',
+              error_type: ErrorTypes.VALIDATION,
+              error: 'similarityThreshold must be a number between 0 and 1'
+            });
+          }
+          // Update the parameter with parsed float
+          parameters.similarityThreshold = threshold;
+        }
+        result = await findDuplicateEvents(calendar, parameters || {});
         break;
         
       default:
@@ -729,6 +761,159 @@ async function deleteEvent(calendar, { eventId }) {
       throw new Error(`Event not found with ID: ${eventId}`);
     }
     
+    throw error;
+  }
+}
+
+/**
+ * Find potential duplicate events in the calendar
+ * @param {Object} calendar - Google Calendar API client
+ * @param {Object} params - Parameters for finding duplicates
+ * @returns {Object} List of potential duplicate groups
+ */
+async function findDuplicateEvents(calendar, { timeMin, timeMax, similarityThreshold = 0.7 }) {
+  try {
+    // Default time range if not specified (from now to 30 days in the future)
+    const now = new Date();
+    const defaultTimeMin = now.toISOString();
+    const defaultTimeMax = new Date(now.setDate(now.getDate() + 30)).toISOString();
+    
+    // Build request parameters
+    const requestParams = {
+      calendarId: 'primary',
+      timeMin: timeMin || defaultTimeMin,
+      timeMax: timeMax || defaultTimeMax,
+      maxResults: 2500, // Get a large number of events to find duplicates
+      singleEvents: true,
+      orderBy: 'startTime',
+    };
+    
+    // Get all events in the time range
+    const response = await calendar.events.list(requestParams);
+    
+    if (!response.data.items || response.data.items.length === 0) {
+      return { 
+        duplicateGroups: [],
+        message: "No events found in the specified time range" 
+      };
+    }
+    
+    const events = response.data.items;
+    const duplicateGroups = [];
+    
+    // Helper function to calculate string similarity (Levenshtein distance based)
+    function calculateSimilarity(str1, str2) {
+      if (!str1 || !str2) return 0;
+      
+      // Convert to lowercase for comparison
+      str1 = str1.toLowerCase();
+      str2 = str2.toLowerCase();
+      
+      // If strings are identical, return 1
+      if (str1 === str2) return 1;
+      
+      // Calculate Levenshtein distance
+      const len1 = str1.length;
+      const len2 = str2.length;
+      const maxLen = Math.max(len1, len2);
+      
+      // Use dynamic programming to compute Levenshtein distance
+      const dp = Array(len1 + 1).fill().map(() => Array(len2 + 1).fill(0));
+      
+      for (let i = 0; i <= len1; i++) dp[i][0] = i;
+      for (let j = 0; j <= len2; j++) dp[0][j] = j;
+      
+      for (let i = 1; i <= len1; i++) {
+        for (let j = 1; j <= len2; j++) {
+          const cost = str1[i-1] === str2[j-1] ? 0 : 1;
+          dp[i][j] = Math.min(
+            dp[i-1][j] + 1,
+            dp[i][j-1] + 1,
+            dp[i-1][j-1] + cost
+          );
+        }
+      }
+      
+      // Convert distance to similarity score (0 to 1)
+      const distance = dp[len1][len2];
+      return 1 - (distance / maxLen);
+    }
+    
+    // Function to check if two events might be duplicates
+    function arePotentialDuplicates(event1, event2, threshold) {
+      // Summary similarity
+      const summarySimilarity = calculateSimilarity(
+        event1.summary || '', 
+        event2.summary || ''
+      );
+      
+      // Time proximity (check if event times are close)
+      const start1 = new Date(event1.start.dateTime || event1.start.date);
+      const start2 = new Date(event2.start.dateTime || event2.start.date);
+      const timeDiffMs = Math.abs(start1 - start2);
+      const timeDiffHours = timeDiffMs / (1000 * 60 * 60);
+      const timeProximity = timeDiffHours < 48 ? 1 : 0; // Consider as close if within 48 hours
+      
+      // Overall similarity score, weighted more toward summary
+      const overallSimilarity = (summarySimilarity * 0.7) + (timeProximity * 0.3);
+      
+      return overallSimilarity >= threshold;
+    }
+    
+    // Find duplicate groups
+    const processedEvents = new Set();
+    
+    for (let i = 0; i < events.length; i++) {
+      const event1 = events[i];
+      
+      // Skip if this event has already been included in a duplicate group
+      if (processedEvents.has(event1.id)) continue;
+      
+      const duplicates = [event1];
+      
+      for (let j = i + 1; j < events.length; j++) {
+        const event2 = events[j];
+        
+        // Skip if this event has already been included in a duplicate group
+        if (processedEvents.has(event2.id)) continue;
+        
+        if (arePotentialDuplicates(event1, event2, similarityThreshold)) {
+          duplicates.push(event2);
+          processedEvents.add(event2.id);
+        }
+      }
+      
+      // If we found duplicates, add the group
+      if (duplicates.length > 1) {
+        duplicateGroups.push({
+          events: duplicates.map(event => ({
+            id: event.id,
+            summary: event.summary || '',
+            description: event.description || '',
+            start: event.start,
+            end: event.end,
+            location: event.location || '',
+            created: event.created,
+            creator: event.creator,
+            htmlLink: event.htmlLink
+          }))
+        });
+        
+        // Mark all events in this group as processed
+        duplicates.forEach(event => processedEvents.add(event.id));
+      }
+    }
+    
+    return {
+      duplicateGroups,
+      count: duplicateGroups.length,
+      timeRange: {
+        from: requestParams.timeMin,
+        to: requestParams.timeMax
+      }
+    };
+  } catch (error) {
+    console.error('Error finding duplicate events:', error);
     throw error;
   }
 }

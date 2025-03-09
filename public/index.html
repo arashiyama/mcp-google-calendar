@@ -70,6 +70,7 @@
       <button id="getEventExample">Get Event</button>
       <button id="updateEventExample">Update Event</button>
       <button id="deleteEventExample">Delete Event</button>
+      <button id="findDuplicatesExample">Find Duplicates</button>
     </div>
     <button id="executeAction">Execute</button>
     
@@ -193,6 +194,22 @@
                 action: "delete_event",
                 parameters: {
                     eventId: "EVENT_ID_HERE" // User needs to replace with actual event ID
+                }
+            }, null, 2);
+        });
+        
+        document.getElementById('findDuplicatesExample').addEventListener('click', () => {
+            // Default search for duplicate events in the next 90 days
+            const now = new Date();
+            const ninetyDaysLater = new Date();
+            ninetyDaysLater.setDate(now.getDate() + 90);
+            
+            document.getElementById('requestBody').value = JSON.stringify({
+                action: "find_duplicates",
+                parameters: {
+                    timeMin: now.toISOString(),
+                    timeMax: ninetyDaysLater.toISOString(),
+                    similarityThreshold: 0.7
                 }
             }, null, 2);
         });
