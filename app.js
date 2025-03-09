@@ -4,6 +4,9 @@ const bodyParser = require('body-parser');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const path = require('path');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const { body, validationResult } = require('express-validator');
 const db = require('./db');
 
 // Load environment variables
@@ -11,9 +14,28 @@ dotenv.config();
 
 const app = express();
 
+// Security middleware
+app.use(helmet());
+
+// Rate limiting
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    status: 'error',
+    error_type: 'rate_limit_exceeded',
+    error: 'Too many requests, please try again later.'
+  }
+});
+
+// Apply rate limiting to API endpoints
+app.use('/mcp/', apiLimiter);
+
 // Middleware
 app.use(cors());
-app.use(bodyParser.json());
+app.use(bodyParser.json({ limit: '1mb' }));
 app.use(express.static('public'));
 
 // Error types for better categorization
@@ -22,8 +44,51 @@ const ErrorTypes = {
   VALIDATION: 'validation_error',
   NOT_FOUND: 'not_found_error',
   API_ERROR: 'api_error',
-  SERVER_ERROR: 'server_error'
+  SERVER_ERROR: 'server_error',
+  RATE_LIMIT: 'rate_limit_exceeded',
+  CSRF: 'csrf_error'
 };
+
+// Define API key authentication middleware
+const apiKeyAuth = async (req, res, next) => {
+  // Skip authentication for definition endpoint and auth routes
+  if (req.path === '/mcp/definition' || 
+      req.path === '/auth/google/callback' || 
+      req.path === '/') {
+    return next();
+  }
+
+  // Check if using API key authentication
+  const apiKey = req.header('X-API-Key') || req.query.api_key;
+  
+  if (apiKey) {
+    try {
+      const isValidKey = await db.validateApiKey(apiKey);
+      if (isValidKey) {
+        return next();
+      }
+      
+      return res.status(401).json({
+        status: 'error',
+        error_type: ErrorTypes.AUTHENTICATION,
+        error: 'Invalid API key'
+      });
+    } catch (error) {
+      console.error('Error validating API key:', error);
+      return res.status(500).json({
+        status: 'error',
+        error_type: ErrorTypes.SERVER_ERROR,
+        error: 'Internal server error'
+      });
+    }
+  }
+  
+  // If no API key, continue to other auth methods
+  next();
+};
+
+// Apply API key authentication middleware
+app.use(apiKeyAuth);
 
 // Google OAuth2 configuration
 const oauth2Client = new google.auth.OAuth2(
@@ -182,6 +247,7 @@ app.get('/mcp/definition', (req, res) => {
           location: "Event location (optional)",
           recurrence: "Array of RRULE strings for recurring events (optional, e.g. ['RRULE:FREQ=DAILY;COUNT=5'])",
           attendees: "Array of attendee email addresses (optional)",
+          reminders: "Reminder settings with useDefault and overrides array (optional)",
           sendUpdates: "Preference for sending email updates (optional, 'all', 'externalOnly', or 'none')"
         },
         response: {
@@ -297,6 +363,60 @@ app.get('/mcp/definition', (req, res) => {
           error_type: "Type of error that occurred (if failed)"
         },
         required_parameters: []
+      },
+      create_event_exception: {
+        description: "Create an exception to a specific instance of a recurring event",
+        parameters: {
+          calendarId: "ID of the calendar to use (defaults to 'primary')",
+          recurringEventId: "ID of the recurring event series (required)",
+          originalStartTime: "The original start time of the instance to modify (required)",
+          summary: "New event title for this instance (optional)",
+          description: "New event description for this instance (optional)",
+          start: "New start time object for this instance (optional)",
+          end: "New end time object for this instance (optional)",
+          location: "New location for this instance (optional)",
+          attendees: "Array of attendee email addresses for this instance (optional)",
+          reminders: "Reminder settings with useDefault and overrides array (optional)",
+          sendUpdates: "Preference for sending email updates (optional)"
+        },
+        response: {
+          status: "success or error",
+          data: "Created event exception details (if successful)",
+          error: "Error message (if failed)",
+          error_type: "Type of error that occurred (if failed)"
+        },
+        required_parameters: ["recurringEventId", "originalStartTime"]
+      },
+      delete_event_instance: {
+        description: "Delete a specific instance of a recurring event",
+        parameters: {
+          calendarId: "ID of the calendar to use (defaults to 'primary')",
+          recurringEventId: "ID of the recurring event series (required)",
+          originalStartTime: "The original start time of the instance to delete (required)",
+          sendUpdates: "Preference for sending email updates (optional)"
+        },
+        response: {
+          status: "success or error",
+          data: "Deletion confirmation (if successful)",
+          error: "Error message (if failed)",
+          error_type: "Type of error that occurred (if failed)"
+        },
+        required_parameters: ["recurringEventId", "originalStartTime"]
+      },
+      manage_webhooks: {
+        description: "Set up or remove notification webhooks",
+        parameters: {
+          operation: "Operation to perform: 'create', 'list', or 'delete'",
+          address: "URL where notifications should be sent (for 'create')",
+          webhookId: "ID of the webhook to delete (for 'delete')"
+        },
+        response: {
+          status: "success or error",
+          data: "Webhook details (if successful)",
+          error: "Error message (if failed)",
+          error_type: "Type of error that occurred (if failed)"
+        },
+        required_parameters: ["operation"]
       }
     },
     error_types: {
@@ -318,18 +438,23 @@ app.get('/mcp/definition', (req, res) => {
 });
 
 // MCP execute endpoint
-app.post('/mcp/execute', async (req, res) => {
+app.post('/mcp/execute', [
+  body('action').notEmpty().withMessage('Action is required'),
+  body('parameters').optional().isObject().withMessage('Parameters must be an object')
+], async (req, res) => {
   try {
-    // Validate basic request structure
-    const { action, parameters } = req.body;
-    
-    if (!action) {
-      return res.json({
+    // Check for validation errors
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
         status: 'error',
         error_type: ErrorTypes.VALIDATION,
-        error: 'Missing required field: action'
+        error: errors.array()[0].msg
       });
     }
+    
+    // Get validated data
+    const { action, parameters } = req.body;
     
     // Check authentication
     if (!tokens) {
@@ -551,6 +676,45 @@ app.post('/mcp/execute', async (req, res) => {
         result = await advancedSearchEvents(calendar, parameters || {});
         break;
         
+      case 'create_event_exception':
+        // Validate required parameters
+        validationError = validateParams(parameters, ['recurringEventId', 'originalStartTime']);
+        if (validationError) {
+          return res.json({
+            status: 'error',
+            error_type: ErrorTypes.VALIDATION,
+            error: validationError
+          });
+        }
+        result = await createEventException(calendar, parameters);
+        break;
+        
+      case 'delete_event_instance':
+        // Validate required parameters
+        validationError = validateParams(parameters, ['recurringEventId', 'originalStartTime']);
+        if (validationError) {
+          return res.json({
+            status: 'error',
+            error_type: ErrorTypes.VALIDATION,
+            error: validationError
+          });
+        }
+        result = await deleteEventInstance(calendar, parameters);
+        break;
+        
+      case 'manage_webhooks':
+        // Validate required parameters
+        validationError = validateParams(parameters, ['operation']);
+        if (validationError) {
+          return res.json({
+            status: 'error',
+            error_type: ErrorTypes.VALIDATION,
+            error: validationError
+          });
+        }
+        result = await manageWebhooks(calendar, parameters);
+        break;
+        
       default:
         return res.json({
           status: 'error',
@@ -569,23 +733,182 @@ app.post('/mcp/execute', async (req, res) => {
     // Categorize errors
     let errorType = ErrorTypes.SERVER_ERROR;
     let errorMessage = error.message || 'An unexpected error occurred';
+    let statusCode = 500;
     
     if (error.code === 404) {
       errorType = ErrorTypes.NOT_FOUND;
+      statusCode = 404;
     } else if (error.code === 401 || error.code === 403) {
       errorType = ErrorTypes.AUTHENTICATION;
+      statusCode = 401;
+    } else if (error.code === 400) {
+      // Handle 400 Bad Request specifically
+      errorType = ErrorTypes.VALIDATION;
+      statusCode = 400;
+    } else if (error.code === 429) {
+      // Handle rate limit errors
+      errorType = ErrorTypes.RATE_LIMIT;
+      statusCode = 429;
+      errorMessage = 'Google Calendar API rate limit exceeded. Please try again later.';
     } else if (error.errors && error.errors.length > 0) {
       errorType = ErrorTypes.API_ERROR;
       errorMessage = error.errors[0].message;
+      
+      // Check for specific Google API error reasons
+      if (error.errors[0].reason === 'rateLimitExceeded' || error.errors[0].reason === 'userRateLimitExceeded') {
+        errorType = ErrorTypes.RATE_LIMIT;
+        statusCode = 429;
+        errorMessage = 'Google Calendar API rate limit exceeded. Please try again later.';
+      } else if (error.errors[0].reason === 'quotaExceeded') {
+        errorType = ErrorTypes.RATE_LIMIT;
+        statusCode = 429;
+        errorMessage = 'Google Calendar API quota exceeded for today. Please try again tomorrow.';
+      }
     }
     
-    return res.json({
+    return res.status(statusCode).json({
       status: 'error',
       error_type: errorType,
       error: errorMessage
     });
   }
 });
+
+// Webhook endpoint for calendar notifications
+app.post('/webhook/calendar', async (req, res) => {
+  try {
+    // Send immediate response to acknowledge receipt
+    res.status(200).send('OK');
+    
+    // Validate the headers
+    const channelId = req.headers['x-goog-channel-id'];
+    const resourceId = req.headers['x-goog-resource-id'];
+    const state = req.headers['x-goog-resource-state'];
+    
+    // Log the notification
+    console.log(`Webhook notification received: ${state} for channel ${channelId}`);
+    
+    if (!channelId || !resourceId) {
+      console.error('Missing required headers in webhook request');
+      return;
+    }
+    
+    // Lookup the webhook in the database
+    const webhook = await db.getWebhook(channelId);
+    
+    if (!webhook) {
+      console.error(`Unknown webhook channel: ${channelId}`);
+      return;
+    }
+    
+    // Process the notification based on state
+    // 'sync' is sent when the webhook is first created
+    // 'exists' is sent when there are existing events
+    // 'update' is sent when events are changed
+    // 'delete' is sent when events are deleted
+    if (state === 'sync') {
+      console.log(`Webhook ${channelId} successfully set up`);
+    } else if (state === 'exists' || state === 'update' || state === 'delete') {
+      // Get calendar client
+      const tokens = await db.loadTokens();
+      if (!tokens) {
+        console.error('No authentication tokens available for webhook processing');
+        return;
+      }
+      
+      const oauth2Client = new google.auth.OAuth2(
+        process.env.GOOGLE_CLIENT_ID,
+        process.env.GOOGLE_CLIENT_SECRET,
+        process.env.GOOGLE_REDIRECT_URI
+      );
+      
+      oauth2Client.setCredentials(tokens);
+      const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+      
+      // Get the latest changes
+      // We'll use either a sync token if we have one, or just get recent events
+      const syncToken = await db.getSyncToken(channelId);
+      
+      const params = {
+        calendarId: 'primary',
+        maxResults: 100,
+        singleEvents: true
+      };
+      
+      if (syncToken) {
+        params.syncToken = syncToken;
+      } else {
+        // If no sync token, just get recent events
+        params.timeMin = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      }
+      
+      try {
+        const response = await calendar.events.list(params);
+        
+        // Store the new sync token for future requests
+        if (response.data.nextSyncToken) {
+          await db.saveSyncToken(channelId, response.data.nextSyncToken);
+        }
+        
+        // Send notification to the webhook address
+        if (response.data.items && response.data.items.length > 0) {
+          // Format events for the notification
+          const events = response.data.items.map(event => ({
+            id: event.id,
+            summary: event.summary || '',
+            start: event.start,
+            end: event.end,
+            status: event.status,
+            updated: event.updated
+          }));
+          
+          // Send the notification
+          await sendWebhookNotification(webhook.address, {
+            type: 'calendar_update',
+            events: events,
+            channelId: channelId,
+            timestamp: new Date().toISOString()
+          });
+        }
+      } catch (error) {
+        if (error.code === 410) {
+          // Sync token expired, clear it and try again next time
+          await db.deleteSyncToken(channelId);
+          console.log(`Sync token expired for webhook ${channelId}, cleared for next notification`);
+        } else {
+          console.error('Error processing webhook notification:', error);
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Error handling webhook notification:', error);
+  }
+});
+
+/**
+ * Send a notification to a webhook address with retry logic
+ * @param {string} address - The webhook URL to send the notification to
+ * @param {Object} data - The notification data
+ * @returns {Promise<void>}
+ */
+async function sendWebhookNotification(address, data) {
+  // Import the notifications module for its retry-enabled sendNotification function
+  const notifications = require('./notifications');
+  
+  try {
+    // Use the retry-enabled notification sender
+    await notifications.sendNotification(address, data, {
+      maxRetries: 3,
+      retryDelay: 2000
+    });
+    
+    console.log(`Webhook notification sent to ${address}`);
+  } catch (error) {
+    console.error('Error sending webhook notification:', error);
+    // Log the error but don't throw it, to prevent webhook processing from failing completely
+    // This prevents one failed notification from breaking the entire webhook chain
+  }
+}
 
 // Home route
 app.get('/', (req, res) => {
@@ -792,7 +1115,7 @@ async function listEvents(calendar, {
  * @param {Object} params - Event parameters
  * @returns {Object} Created event details
  */
-async function createEvent(calendar, { calendarId = 'primary', summary, description, start, end, location, recurrence, attendees, sendUpdates }) {
+async function createEvent(calendar, { calendarId = 'primary', summary, description, start, end, location, recurrence, attendees, reminders, sendUpdates }) {
   try {
     // Validate date formats
     if (start && typeof start === 'object' && start.dateTime) {
@@ -828,6 +1151,11 @@ async function createEvent(calendar, { calendarId = 'primary', summary, descript
     // Add attendees if provided
     if (attendees && Array.isArray(attendees)) {
       event.attendees = attendees.map(email => ({ email }));
+    }
+    
+    // Add reminders if provided
+    if (reminders) {
+      event.reminders = reminders;
     }
     
     // Prepare request parameters
@@ -1471,6 +1799,69 @@ async function batchOperations(calendar, { operations = [] }) {
             });
             break;
             
+          case 'create_event_exception':
+            // Validate required parameters
+            const createExceptionError = validateParams(parameters, ['recurringEventId', 'originalStartTime']);
+            if (createExceptionError) {
+              results.push({
+                action: 'create_event_exception',
+                success: false,
+                error: createExceptionError,
+                error_type: ErrorTypes.VALIDATION
+              });
+              continue;
+            }
+            
+            result = await createEventException(calendar, parameters);
+            results.push({
+              action: 'create_event_exception',
+              success: true,
+              data: result
+            });
+            break;
+            
+          case 'delete_event_instance':
+            // Validate required parameters
+            const deleteInstanceError = validateParams(parameters, ['recurringEventId', 'originalStartTime']);
+            if (deleteInstanceError) {
+              results.push({
+                action: 'delete_event_instance',
+                success: false,
+                error: deleteInstanceError,
+                error_type: ErrorTypes.VALIDATION
+              });
+              continue;
+            }
+            
+            result = await deleteEventInstance(calendar, parameters);
+            results.push({
+              action: 'delete_event_instance',
+              success: true,
+              data: result
+            });
+            break;
+            
+          case 'manage_webhooks':
+            // Validate required parameters
+            const webhookError = validateParams(parameters, ['operation']);
+            if (webhookError) {
+              results.push({
+                action: 'manage_webhooks',
+                success: false,
+                error: webhookError,
+                error_type: ErrorTypes.VALIDATION
+              });
+              continue;
+            }
+            
+            result = await manageWebhooks(calendar, parameters);
+            results.push({
+              action: 'manage_webhooks',
+              success: true,
+              data: result
+            });
+            break;
+            
           default:
             results.push({
               action: action,
@@ -1482,7 +1873,7 @@ async function batchOperations(calendar, { operations = [] }) {
       } catch (error) {
         console.error(`Error in batch operation (${action}):`, error);
         
-        // Categorize errors
+        // Categorize errors - consistent with main error handler
         let errorType = ErrorTypes.SERVER_ERROR;
         let errorMessage = error.message || 'An unexpected error occurred';
         
@@ -1490,9 +1881,25 @@ async function batchOperations(calendar, { operations = [] }) {
           errorType = ErrorTypes.NOT_FOUND;
         } else if (error.code === 401 || error.code === 403) {
           errorType = ErrorTypes.AUTHENTICATION;
+        } else if (error.code === 400) {
+          // Handle 400 Bad Request specifically
+          errorType = ErrorTypes.VALIDATION;
+        } else if (error.code === 429) {
+          // Handle rate limit errors
+          errorType = ErrorTypes.RATE_LIMIT;
+          errorMessage = 'Google Calendar API rate limit exceeded. Please try again later.';
         } else if (error.errors && error.errors.length > 0) {
           errorType = ErrorTypes.API_ERROR;
           errorMessage = error.errors[0].message;
+          
+          // Check for specific Google API error reasons
+          if (error.errors[0].reason === 'rateLimitExceeded' || error.errors[0].reason === 'userRateLimitExceeded') {
+            errorType = ErrorTypes.RATE_LIMIT;
+            errorMessage = 'Google Calendar API rate limit exceeded. Please try again later.';
+          } else if (error.errors[0].reason === 'quotaExceeded') {
+            errorType = ErrorTypes.RATE_LIMIT;
+            errorMessage = 'Google Calendar API quota exceeded for today. Please try again tomorrow.';
+          }
         }
         
         results.push({
@@ -1696,6 +2103,118 @@ async function revokeTokens() {
   }
 }
 
+// API key management routes
+app.post('/api/keys', async (req, res) => {
+  try {
+    // Check if authenticated
+    if (!tokens) {
+      return res.status(401).json({
+        status: 'error',
+        error_type: ErrorTypes.AUTHENTICATION,
+        error: 'You must be authenticated to manage API keys'
+      });
+    }
+    
+    const { name, expiresAt } = req.body;
+    
+    if (!name) {
+      return res.status(400).json({
+        status: 'error',
+        error_type: ErrorTypes.VALIDATION,
+        error: 'API key name is required'
+      });
+    }
+    
+    const apiKey = await db.generateApiKey(name, expiresAt);
+    
+    return res.json({
+      status: 'success',
+      data: apiKey
+    });
+  } catch (error) {
+    console.error('Error generating API key:', error);
+    return res.status(500).json({
+      status: 'error',
+      error_type: ErrorTypes.SERVER_ERROR,
+      error: 'Failed to generate API key'
+    });
+  }
+});
+
+app.get('/api/keys', async (req, res) => {
+  try {
+    // Check if authenticated
+    if (!tokens) {
+      return res.status(401).json({
+        status: 'error',
+        error_type: ErrorTypes.AUTHENTICATION,
+        error: 'You must be authenticated to view API keys'
+      });
+    }
+    
+    const apiKeys = await db.listApiKeys();
+    
+    return res.json({
+      status: 'success',
+      data: apiKeys
+    });
+  } catch (error) {
+    console.error('Error listing API keys:', error);
+    return res.status(500).json({
+      status: 'error',
+      error_type: ErrorTypes.SERVER_ERROR,
+      error: 'Failed to list API keys'
+    });
+  }
+});
+
+app.delete('/api/keys/:id', async (req, res) => {
+  try {
+    // Check if authenticated
+    if (!tokens) {
+      return res.status(401).json({
+        status: 'error',
+        error_type: ErrorTypes.AUTHENTICATION,
+        error: 'You must be authenticated to revoke API keys'
+      });
+    }
+    
+    const id = parseInt(req.params.id, 10);
+    
+    if (isNaN(id)) {
+      return res.status(400).json({
+        status: 'error',
+        error_type: ErrorTypes.VALIDATION,
+        error: 'Invalid API key ID'
+      });
+    }
+    
+    const success = await db.revokeApiKey(id);
+    
+    if (!success) {
+      return res.status(404).json({
+        status: 'error',
+        error_type: ErrorTypes.NOT_FOUND,
+        error: 'API key not found'
+      });
+    }
+    
+    return res.json({
+      status: 'success',
+      data: {
+        message: 'API key revoked successfully'
+      }
+    });
+  } catch (error) {
+    console.error('Error revoking API key:', error);
+    return res.status(500).json({
+      status: 'error',
+      error_type: ErrorTypes.SERVER_ERROR,
+      error: 'Failed to revoke API key'
+    });
+  }
+});
+
 // Logout endpoint
 app.get('/logout', async (req, res) => {
   try {
@@ -1730,6 +2249,309 @@ app.get('/logout', async (req, res) => {
   }
 });
 
+/**
+ * Create an exception to a specific instance of a recurring event
+ * @param {Object} calendar - Google Calendar API client
+ * @param {Object} params - Parameters for creating the exception
+ * @returns {Object} Created exception event details
+ */
+async function createEventException(calendar, { 
+  calendarId = 'primary', 
+  recurringEventId, 
+  originalStartTime, 
+  summary, 
+  description, 
+  start, 
+  end, 
+  location, 
+  attendees, 
+  reminders,
+  sendUpdates 
+}) {
+  try {
+    if (!recurringEventId) {
+      throw new Error('Recurring event ID is required');
+    }
+    
+    if (!originalStartTime) {
+      throw new Error('Original start time of the instance is required');
+    }
+    
+    // First get the recurring event to ensure it exists
+    const masterEvent = await calendar.events.get({
+      calendarId,
+      eventId: recurringEventId
+    });
+    
+    if (!masterEvent.data.recurrence) {
+      throw new Error('The specified event is not a recurring event');
+    }
+    
+    // Validate originalStartTime format
+    try {
+      new Date(originalStartTime);
+    } catch (e) {
+      throw new Error('Invalid originalStartTime format. Use ISO 8601 format.');
+    }
+    
+    // Create the exception by updating that specific instance
+    // First, we need to get the instance to modify
+    const instances = await calendar.events.instances({
+      calendarId,
+      eventId: recurringEventId,
+      maxResults: 100, // Get enough instances to find our target
+    });
+    
+    // Find the specific instance with matching original start time
+    const instanceToModify = instances.data.items.find(instance => {
+      // Match the date part at minimum
+      const instanceStart = instance.originalStartTime 
+        ? new Date(instance.originalStartTime.dateTime || instance.originalStartTime.date).toISOString()
+        : null;
+      const targetStart = new Date(originalStartTime).toISOString();
+      return instanceStart && instanceStart.substring(0, 10) === targetStart.substring(0, 10);
+    });
+    
+    if (!instanceToModify) {
+      throw new Error('Could not find the specified instance in this recurring event series');
+    }
+    
+    // Now create the exception by modifying the instance
+    const exceptionUpdate = {
+      ...instanceToModify
+    };
+    
+    // Update fields if provided
+    if (summary !== undefined) exceptionUpdate.summary = summary;
+    if (description !== undefined) exceptionUpdate.description = description;
+    if (start !== undefined) exceptionUpdate.start = start;
+    if (end !== undefined) exceptionUpdate.end = end;
+    if (location !== undefined) exceptionUpdate.location = location;
+    
+    // Update reminders if provided
+    if (reminders !== undefined) {
+      exceptionUpdate.reminders = reminders;
+    }
+    
+    // Update attendees if provided
+    if (attendees !== undefined) {
+      if (attendees === null) {
+        delete exceptionUpdate.attendees;
+      } else if (Array.isArray(attendees)) {
+        exceptionUpdate.attendees = attendees.map(email => ({ email }));
+      }
+    }
+    
+    // Prepare request parameters
+    const requestParams = {
+      calendarId,
+      eventId: instanceToModify.id,
+      resource: exceptionUpdate
+    };
+    
+    // Add sendUpdates if provided
+    if (sendUpdates && ['all', 'externalOnly', 'none'].includes(sendUpdates)) {
+      requestParams.sendUpdates = sendUpdates;
+    }
+    
+    const response = await calendar.events.update(requestParams);
+    
+    return {
+      id: response.data.id,
+      recurringEventId: response.data.recurringEventId,
+      calendarId,
+      summary: response.data.summary || '',
+      description: response.data.description || '',
+      start: response.data.start,
+      end: response.data.end,
+      location: response.data.location || '',
+      htmlLink: response.data.htmlLink,
+      updated: response.data.updated,
+      status: response.data.status,
+      originalStartTime: response.data.originalStartTime,
+      isRecurringException: true
+    };
+  } catch (error) {
+    console.error('Error creating event exception:', error);
+    throw error;
+  }
+}
+
+/**
+ * Delete a specific instance of a recurring event
+ * @param {Object} calendar - Google Calendar API client
+ * @param {Object} params - Parameters for deleting the instance
+ * @returns {Object} Deletion status
+ */
+async function deleteEventInstance(calendar, { 
+  calendarId = 'primary', 
+  recurringEventId, 
+  originalStartTime, 
+  sendUpdates 
+}) {
+  try {
+    if (!recurringEventId) {
+      throw new Error('Recurring event ID is required');
+    }
+    
+    if (!originalStartTime) {
+      throw new Error('Original start time of the instance is required');
+    }
+    
+    // Validate originalStartTime format
+    try {
+      new Date(originalStartTime);
+    } catch (e) {
+      throw new Error('Invalid originalStartTime format. Use ISO 8601 format.');
+    }
+    
+    // Get the instances of the recurring event
+    const instances = await calendar.events.instances({
+      calendarId,
+      eventId: recurringEventId,
+      maxResults: 100, // Get enough instances to find our target
+    });
+    
+    // Find the specific instance with matching original start time
+    const instanceToDelete = instances.data.items.find(instance => {
+      // Match the date part at minimum
+      const instanceStart = instance.originalStartTime 
+        ? new Date(instance.originalStartTime.dateTime || instance.originalStartTime.date).toISOString()
+        : null;
+      const targetStart = new Date(originalStartTime).toISOString();
+      return instanceStart && instanceStart.substring(0, 10) === targetStart.substring(0, 10);
+    });
+    
+    if (!instanceToDelete) {
+      throw new Error('Could not find the specified instance in this recurring event series');
+    }
+    
+    // Prepare delete request parameters
+    const requestParams = {
+      calendarId,
+      eventId: instanceToDelete.id,
+    };
+    
+    // Add sendUpdates if provided
+    if (sendUpdates && ['all', 'externalOnly', 'none'].includes(sendUpdates)) {
+      requestParams.sendUpdates = sendUpdates;
+    }
+    
+    // Delete the specific instance
+    await calendar.events.delete(requestParams);
+    
+    return {
+      eventId: instanceToDelete.id,
+      recurringEventId,
+      calendarId,
+      deleted: true,
+      originalStartTime,
+      timestamp: new Date().toISOString()
+    };
+  } catch (error) {
+    console.error('Error deleting event instance:', error);
+    throw error;
+  }
+}
+
+/**
+ * Set up, list, or delete webhooks for calendar notifications
+ * @param {Object} calendar - Google Calendar API client
+ * @param {Object} params - Parameters for managing webhooks
+ * @returns {Object} Webhook operation result
+ */
+async function manageWebhooks(calendar, { operation, address, webhookId }) {
+  try {
+    if (!operation || !['create', 'list', 'delete'].includes(operation)) {
+      throw new Error('Valid operation is required: create, list, or delete');
+    }
+    
+    switch (operation) {
+      case 'create':
+        if (!address) {
+          throw new Error('Webhook address is required for create operation');
+        }
+        
+        // Create a unique client token for this webhook
+        const clientToken = require('crypto').randomBytes(16).toString('hex');
+        
+        // Set up watch request to Google Calendar API
+        const response = await calendar.events.watch({
+          calendarId: 'primary',
+          resource: {
+            id: clientToken,
+            type: 'web_hook',
+            address: address,
+            params: { ttl: '86400' } // 24 hour expiration
+          }
+        });
+        
+        // Store webhook information in database
+        await db.saveWebhook({
+          id: response.data.id,
+          resourceId: response.data.resourceId,
+          address: address,
+          expiration: response.data.expiration
+        });
+        
+        return {
+          id: response.data.id,
+          expiration: new Date(parseInt(response.data.expiration)).toISOString(),
+          operation: 'create'
+        };
+        
+      case 'list':
+        // Get all webhooks from the database
+        const webhooks = await db.getAllWebhooks();
+        return {
+          webhooks: webhooks.map(webhook => ({
+            id: webhook.id,
+            address: webhook.address,
+            expiration: new Date(parseInt(webhook.expiration)).toISOString(),
+            active: parseInt(webhook.expiration) > Date.now()
+          })),
+          count: webhooks.length,
+          operation: 'list'
+        };
+        
+      case 'delete':
+        if (!webhookId) {
+          throw new Error('Webhook ID is required for delete operation');
+        }
+        
+        // Get webhook info from the database
+        const webhook = await db.getWebhook(webhookId);
+        
+        if (!webhook) {
+          throw new Error(`Webhook not found with ID: ${webhookId}`);
+        }
+        
+        // Stop the watch
+        await calendar.channels.stop({
+          resource: {
+            id: webhook.id,
+            resourceId: webhook.resourceId
+          }
+        });
+        
+        // Remove from database
+        await db.deleteWebhook(webhookId);
+        
+        return {
+          id: webhookId,
+          deleted: true,
+          operation: 'delete'
+        };
+        
+      default:
+        throw new Error(`Unsupported operation: ${operation}`);
+    }
+  } catch (error) {
+    console.error('Error managing webhooks:', error);
+    throw error;
+  }
+}
+
 module.exports = { 
   app, 
   validateParams, 
@@ -1744,5 +2566,8 @@ module.exports = {
   deleteEvent,
   findDuplicateEvents,
   batchOperations,
-  advancedSearchEvents
+  advancedSearchEvents,
+  createEventException,
+  deleteEventInstance,
+  manageWebhooks
 };
