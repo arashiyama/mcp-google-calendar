@@ -25,6 +25,17 @@
             border-radius: 4px;
             cursor: pointer;
             margin-right: 10px;
+            margin-bottom: 10px;
+        }
+        
+        .example-buttons {
+            margin: 15px 0;
+        }
+        
+        .example-buttons button {
+            font-size: 12px;
+            padding: 6px 12px;
+            background-color: #34a853;
         }
         textarea {
             width: 100%;
@@ -52,6 +63,14 @@
     "maxResults": 10
   }
 }</textarea>
+    <div class="example-buttons">
+      <p>Example Actions:</p>
+      <button id="listEventsExample">List Events</button>
+      <button id="createEventExample">Create Event</button>
+      <button id="getEventExample">Get Event</button>
+      <button id="updateEventExample">Update Event</button>
+      <button id="deleteEventExample">Delete Event</button>
+    </div>
     <button id="executeAction">Execute</button>
     
     <div id="result">
@@ -94,6 +113,88 @@
             } catch (error) {
                 document.getElementById('response').textContent = `Error: ${error.message}`;
             }
+        });
+        
+        // Example buttons to load request templates
+        document.getElementById('listEventsExample').addEventListener('click', () => {
+            document.getElementById('requestBody').value = JSON.stringify({
+                action: "list_events",
+                parameters: {
+                    timeMin: new Date().toISOString(),
+                    maxResults: 10
+                }
+            }, null, 2);
+        });
+        
+        document.getElementById('createEventExample').addEventListener('click', () => {
+            const tomorrow = new Date();
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            tomorrow.setHours(10, 0, 0, 0);
+            
+            const endTime = new Date(tomorrow);
+            endTime.setHours(11, 0, 0, 0);
+            
+            document.getElementById('requestBody').value = JSON.stringify({
+                action: "create_event",
+                parameters: {
+                    summary: "Sample Meeting",
+                    description: "This is a sample meeting created from the MCP client",
+                    location: "Conference Room",
+                    start: {
+                        dateTime: tomorrow.toISOString(),
+                        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+                    },
+                    end: {
+                        dateTime: endTime.toISOString(),
+                        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+                    }
+                }
+            }, null, 2);
+        });
+        
+        document.getElementById('getEventExample').addEventListener('click', () => {
+            document.getElementById('requestBody').value = JSON.stringify({
+                action: "get_event",
+                parameters: {
+                    eventId: "EVENT_ID_HERE" // User needs to replace with actual event ID
+                }
+            }, null, 2);
+        });
+        
+        document.getElementById('updateEventExample').addEventListener('click', () => {
+            const tomorrow = new Date();
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            tomorrow.setHours(11, 0, 0, 0);
+            
+            const endTime = new Date(tomorrow);
+            endTime.setHours(12, 0, 0, 0);
+            
+            document.getElementById('requestBody').value = JSON.stringify({
+                action: "update_event",
+                parameters: {
+                    eventId: "EVENT_ID_HERE", // User needs to replace with actual event ID
+                    summary: "Updated Meeting",
+                    description: "This meeting was updated via the MCP client",
+                    location: "Virtual Meeting",
+                    start: {
+                        dateTime: tomorrow.toISOString(),
+                        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+                    },
+                    end: {
+                        dateTime: endTime.toISOString(),
+                        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+                    }
+                }
+            }, null, 2);
+        });
+        
+        document.getElementById('deleteEventExample').addEventListener('click', () => {
+            document.getElementById('requestBody').value = JSON.stringify({
+                action: "delete_event",
+                parameters: {
+                    eventId: "EVENT_ID_HERE" // User needs to replace with actual event ID
+                }
+            }, null, 2);
         });
     </script>
 </body>

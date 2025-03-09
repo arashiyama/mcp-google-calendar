@@ -40,6 +40,8 @@ This is a Model Context Protocol (MCP) server implementation for Google Calendar
 - `list_events` - List calendar events
 - `create_event` - Create a new calendar event
 - `get_event` - Get details for a specific event
+- `update_event` - Update an existing calendar event
+- `delete_event` - Delete a calendar event
 
 ## Example Usage
 
@@ -78,6 +80,37 @@ This is a Model Context Protocol (MCP) server implementation for Google Calendar
 ```json
 {
   "action": "get_event",
+  "parameters": {
+    "eventId": "event_id_here"
+  }
+}
+```
+
+### Update Event
+```json
+{
+  "action": "update_event",
+  "parameters": {
+    "eventId": "event_id_here",
+    "summary": "Updated Meeting Title",
+    "description": "This event has been updated",
+    "location": "Conference Room B",
+    "start": {
+      "dateTime": "2023-01-15T10:00:00-07:00",
+      "timeZone": "America/Los_Angeles"
+    },
+    "end": {
+      "dateTime": "2023-01-15T11:00:00-07:00",
+      "timeZone": "America/Los_Angeles"
+    }
+  }
+}
+```
+
+### Delete Event
+```json
+{
+  "action": "delete_event",
   "parameters": {
     "eventId": "event_id_here"
   }

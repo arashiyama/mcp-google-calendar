@@ -151,6 +151,37 @@ app.get('/mcp/definition', (req, res) => {
           error_type: "Type of error that occurred (if failed)"
         },
         required_parameters: ["eventId"]
+      },
+      update_event: {
+        description: "Update an existing calendar event",
+        parameters: {
+          eventId: "ID of the event to update (required)",
+          summary: "New event title (optional)",
+          description: "New event description (optional)",
+          start: "New event start time object with dateTime and timeZone (optional)",
+          end: "New event end time object with dateTime and timeZone (optional)",
+          location: "New event location (optional)"
+        },
+        response: {
+          status: "success or error",
+          data: "Updated event details (if successful)",
+          error: "Error message (if failed)",
+          error_type: "Type of error that occurred (if failed)"
+        },
+        required_parameters: ["eventId"]
+      },
+      delete_event: {
+        description: "Delete a calendar event",
+        parameters: {
+          eventId: "ID of the event to delete (required)"
+        },
+        response: {
+          status: "success or error",
+          data: "Deletion confirmation (if successful)",
+          error: "Error message (if failed)",
+          error_type: "Type of error that occurred (if failed)"
+        },
+        required_parameters: ["eventId"]
       }
     },
     error_types: {
@@ -227,34 +258,76 @@ app.post('/mcp/execute', async (req, res) => {
     
     // Process the requested action
     let result;
+    let validationError;
+    
     switch (action) {
       case 'list_events':
         result = await listEvents(calendar, parameters || {});
         break;
+        
       case 'create_event':
         // Validate required parameters
-        const createError = validateParams(parameters, ['summary', 'start', 'end']);
-        if (createError) {
+        validationError = validateParams(parameters, ['summary', 'start', 'end']);
+        if (validationError) {
           return res.json({
             status: 'error',
             error_type: ErrorTypes.VALIDATION,
-            error: createError
+            error: validationError
           });
         }
         result = await createEvent(calendar, parameters);
         break;
+        
       case 'get_event':
         // Validate required parameters
-        const getError = validateParams(parameters, ['eventId']);
-        if (getError) {
+        validationError = validateParams(parameters, ['eventId']);
+        if (validationError) {
           return res.json({
             status: 'error',
             error_type: ErrorTypes.VALIDATION,
-            error: getError
+            error: validationError
           });
         }
         result = await getEvent(calendar, parameters);
         break;
+        
+      case 'update_event':
+        // Validate required parameters
+        validationError = validateParams(parameters, ['eventId']);
+        if (validationError) {
+          return res.json({
+            status: 'error',
+            error_type: ErrorTypes.VALIDATION,
+            error: validationError
+          });
+        }
+        
+        // At least one update field should be provided
+        if (!parameters.summary && !parameters.description && 
+            !parameters.start && !parameters.end && !parameters.location) {
+          return res.json({
+            status: 'error',
+            error_type: ErrorTypes.VALIDATION,
+            error: 'At least one field to update must be provided'
+          });
+        }
+        
+        result = await updateEvent(calendar, parameters);
+        break;
+        
+      case 'delete_event':
+        // Validate required parameters
+        validationError = validateParams(parameters, ['eventId']);
+        if (validationError) {
+          return res.json({
+            status: 'error',
+            error_type: ErrorTypes.VALIDATION,
+            error: validationError
+          });
+        }
+        result = await deleteEvent(calendar, parameters);
+        break;
+        
       default:
         return res.json({
           status: 'error',
@@ -532,6 +605,124 @@ async function getEvent(calendar, { eventId }) {
     };
   } catch (error) {
     console.error('Error getting event:', error);
+    
+    // Handle specific error cases
+    if (error.code === 404) {
+      throw new Error(`Event not found with ID: ${eventId}`);
+    }
+    
+    throw error;
+  }
+}
+
+/**
+ * Update an existing calendar event
+ * @param {Object} calendar - Google Calendar API client
+ * @param {Object} params - Parameters for updating the event
+ * @returns {Object} Updated event details
+ */
+async function updateEvent(calendar, { eventId, summary, description, start, end, location }) {
+  try {
+    if (!eventId) {
+      throw new Error('Event ID is required');
+    }
+    
+    // First get the existing event to ensure it exists and to preserve fields not being updated
+    const currentEvent = await calendar.events.get({
+      calendarId: 'primary',
+      eventId: eventId
+    });
+    
+    // Build the update using the current event as base and overriding with new values
+    const eventUpdate = {
+      ...currentEvent.data
+    };
+    
+    // Update fields if provided in params
+    if (summary !== undefined) eventUpdate.summary = summary;
+    if (description !== undefined) eventUpdate.description = description;
+    if (start !== undefined) eventUpdate.start = start;
+    if (end !== undefined) eventUpdate.end = end;
+    if (location !== undefined) eventUpdate.location = location;
+    
+    // Validate date formats if provided
+    if (start && typeof start === 'object' && start.dateTime) {
+      try {
+        new Date(start.dateTime);
+      } catch (e) {
+        throw new Error('Invalid start.dateTime format. Use ISO 8601 format.');
+      }
+    }
+    
+    if (end && typeof end === 'object' && end.dateTime) {
+      try {
+        new Date(end.dateTime);
+      } catch (e) {
+        throw new Error('Invalid end.dateTime format. Use ISO 8601 format.');
+      }
+    }
+    
+    // Send the update request
+    const response = await calendar.events.update({
+      calendarId: 'primary',
+      eventId: eventId,
+      resource: eventUpdate
+    });
+    
+    return {
+      id: response.data.id,
+      summary: response.data.summary || '',
+      description: response.data.description || '',
+      start: response.data.start,
+      end: response.data.end,
+      location: response.data.location || '',
+      htmlLink: response.data.htmlLink,
+      updated: response.data.updated,
+      status: response.data.status
+    };
+  } catch (error) {
+    console.error('Error updating event:', error);
+    
+    // Handle specific error cases
+    if (error.code === 404) {
+      throw new Error(`Event not found with ID: ${eventId}`);
+    }
+    
+    throw error;
+  }
+}
+
+/**
+ * Delete a calendar event
+ * @param {Object} calendar - Google Calendar API client
+ * @param {Object} params - Parameters with eventId
+ * @returns {Object} Deletion status
+ */
+async function deleteEvent(calendar, { eventId }) {
+  try {
+    if (!eventId) {
+      throw new Error('Event ID is required');
+    }
+    
+    // Verify the event exists first
+    await calendar.events.get({
+      calendarId: 'primary',
+      eventId: eventId
+    });
+    
+    // Delete the event
+    await calendar.events.delete({
+      calendarId: 'primary',
+      eventId: eventId
+    });
+    
+    return {
+      eventId: eventId,
+      deleted: true,
+      timestamp: new Date().toISOString()
+    };
+  } catch (error) {
+    console.error('Error deleting event:', error);
     
     // Handle specific error cases
     if (error.code === 404) {
