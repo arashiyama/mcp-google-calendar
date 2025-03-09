@@ -37,6 +37,7 @@ This is a Model Context Protocol (MCP) server implementation for Google Calendar
 
 ## Supported Actions
 
+- `list_calendars` - List all available calendars
 - `list_events` - List calendar events
 - `create_event` - Create a new calendar event
 - `get_event` - Get details for a specific event
@@ -44,13 +45,24 @@ This is a Model Context Protocol (MCP) server implementation for Google Calendar
 - `delete_event` - Delete a calendar event
 - `find_duplicates` - Identify potential duplicate events in your calendar
 
+All event-related actions support an optional `calendarId` parameter to work with different calendars. If not specified, the primary calendar is used by default.
+
 ## Example Usage
+
+### List Calendars
+```json
+{
+  "action": "list_calendars",
+  "parameters": {}
+}
+```
 
 ### List Events
 ```json
 {
   "action": "list_events",
   "parameters": {
+    "calendarId": "primary",
     "timeMin": "2023-01-01T00:00:00Z",
     "maxResults": 10
   }
@@ -62,6 +74,7 @@ This is a Model Context Protocol (MCP) server implementation for Google Calendar
 {
   "action": "create_event",
   "parameters": {
+    "calendarId": "primary",
     "summary": "Team Meeting",
     "description": "Weekly team sync",
     "location": "Conference Room A",
@@ -82,6 +95,7 @@ This is a Model Context Protocol (MCP) server implementation for Google Calendar
 {
   "action": "get_event",
   "parameters": {
+    "calendarId": "primary",
     "eventId": "event_id_here"
   }
 }
@@ -92,6 +106,7 @@ This is a Model Context Protocol (MCP) server implementation for Google Calendar
 {
   "action": "update_event",
   "parameters": {
+    "calendarId": "primary",
     "eventId": "event_id_here",
     "summary": "Updated Meeting Title",
     "description": "This event has been updated",
@@ -113,6 +128,7 @@ This is a Model Context Protocol (MCP) server implementation for Google Calendar
 {
   "action": "delete_event",
   "parameters": {
+    "calendarId": "primary",
     "eventId": "event_id_here"
   }
 }
@@ -123,6 +139,7 @@ This is a Model Context Protocol (MCP) server implementation for Google Calendar
 {
   "action": "find_duplicates",
   "parameters": {
+    "calendarId": "primary",
     "timeMin": "2023-01-01T00:00:00Z",
     "timeMax": "2023-12-31T23:59:59Z",
     "similarityThreshold": 0.7

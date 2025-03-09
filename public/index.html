@@ -65,6 +65,7 @@
 }</textarea>
     <div class="example-buttons">
       <p>Example Actions:</p>
+      <button id="listCalendarsExample">List Calendars</button>
       <button id="listEventsExample">List Events</button>
       <button id="createEventExample">Create Event</button>
       <button id="getEventExample">Get Event</button>
@@ -117,10 +118,18 @@
         });
         
         // Example buttons to load request templates
+        document.getElementById('listCalendarsExample').addEventListener('click', () => {
+            document.getElementById('requestBody').value = JSON.stringify({
+                action: "list_calendars",
+                parameters: {}
+            }, null, 2);
+        });
+
         document.getElementById('listEventsExample').addEventListener('click', () => {
             document.getElementById('requestBody').value = JSON.stringify({
                 action: "list_events",
                 parameters: {
+                    calendarId: "primary",
                     timeMin: new Date().toISOString(),
                     maxResults: 10
                 }
@@ -138,6 +147,7 @@
             document.getElementById('requestBody').value = JSON.stringify({
                 action: "create_event",
                 parameters: {
+                    calendarId: "primary",
                     summary: "Sample Meeting",
                     description: "This is a sample meeting created from the MCP client",
                     location: "Conference Room",
@@ -157,6 +167,7 @@
             document.getElementById('requestBody').value = JSON.stringify({
                 action: "get_event",
                 parameters: {
+                    calendarId: "primary",
                     eventId: "EVENT_ID_HERE" // User needs to replace with actual event ID
                 }
             }, null, 2);
@@ -173,6 +184,7 @@
             document.getElementById('requestBody').value = JSON.stringify({
                 action: "update_event",
                 parameters: {
+                    calendarId: "primary",
                     eventId: "EVENT_ID_HERE", // User needs to replace with actual event ID
                     summary: "Updated Meeting",
                     description: "This meeting was updated via the MCP client",
@@ -193,6 +205,7 @@
             document.getElementById('requestBody').value = JSON.stringify({
                 action: "delete_event",
                 parameters: {
+                    calendarId: "primary",
                     eventId: "EVENT_ID_HERE" // User needs to replace with actual event ID
                 }
             }, null, 2);
@@ -207,6 +220,7 @@
             document.getElementById('requestBody').value = JSON.stringify({
                 action: "find_duplicates",
                 parameters: {
+                    calendarId: "primary",
                     timeMin: now.toISOString(),
                     timeMax: ninetyDaysLater.toISOString(),
                     similarityThreshold: 0.7

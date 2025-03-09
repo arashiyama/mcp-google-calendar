@@ -105,9 +105,21 @@ app.get('/mcp/definition', (req, res) => {
     version: "1.0.0",
     description: "MCP server for Google Calendar access",
     actions: {
+      list_calendars: {
+        description: "List available calendars the user has access to",
+        parameters: {},
+        response: {
+          status: "success or error",
+          data: "Array of calendar objects (if successful)",
+          error: "Error message (if failed)",
+          error_type: "Type of error that occurred (if failed)"
+        },
+        required_parameters: []
+      },
       list_events: {
         description: "List calendar events based on specified criteria",
         parameters: {
+          calendarId: "ID of the calendar to use (defaults to 'primary')",
           timeMin: "ISO date string for the earliest event time (defaults to current time if not specified)",
           timeMax: "ISO date string for the latest event time",
           maxResults: "Maximum number of events to return (defaults to 10)",
@@ -124,6 +136,7 @@ app.get('/mcp/definition', (req, res) => {
       create_event: {
         description: "Create a new calendar event",
         parameters: {
+          calendarId: "ID of the calendar to use (defaults to 'primary')",
           summary: "Event title (required)",
           description: "Event description (optional)",
           start: "Event start time object with dateTime and timeZone (required)",
@@ -141,6 +154,7 @@ app.get('/mcp/definition', (req, res) => {
       get_event: {
         description: "Get detailed information for a specific event",
         parameters: {
+          calendarId: "ID of the calendar to use (defaults to 'primary')",
           eventId: "ID of the event to retrieve (required)"
         },
         response: {
@@ -154,6 +168,7 @@ app.get('/mcp/definition', (req, res) => {
       update_event: {
         description: "Update an existing calendar event",
         parameters: {
+          calendarId: "ID of the calendar to use (defaults to 'primary')",
           eventId: "ID of the event to update (required)",
           summary: "New event title (optional)",
           description: "New event description (optional)",
@@ -172,6 +187,7 @@ app.get('/mcp/definition', (req, res) => {
       delete_event: {
         description: "Delete a calendar event",
         parameters: {
+          calendarId: "ID of the calendar to use (defaults to 'primary')",
           eventId: "ID of the event to delete (required)"
         },
         response: {
@@ -185,6 +201,7 @@ app.get('/mcp/definition', (req, res) => {
       find_duplicates: {
         description: "Identify potential duplicate events in the calendar",
         parameters: {
+          calendarId: "ID of the calendar to use (defaults to 'primary')",
           timeMin: "ISO date string for the earliest event time (defaults to current time)",
           timeMax: "ISO date string for the latest event time (defaults to 30 days from now)",
           similarityThreshold: "Threshold for considering events as duplicates (0.0-1.0, defaults to 0.7)"
@@ -275,6 +292,10 @@ app.post('/mcp/execute', async (req, res) => {
     let validationError;
     
     switch (action) {
+      case 'list_calendars':
+        result = await listCalendars(calendar);
+        break;
+        
       case 'list_events':
         result = await listEvents(calendar, parameters || {});
         break;
@@ -515,11 +536,11 @@ app.get('/auth/google/callback', async (req, res) => {
  * @param {Object} params - Parameters for listing events
  * @returns {Array} Array of calendar events
  */
-async function listEvents(calendar, { timeMin, maxResults = 10, timeMax, q }) {
+async function listEvents(calendar, { calendarId = 'primary', timeMin, maxResults = 10, timeMax, q }) {
   try {
     // Build request parameters with all available filters
     const requestParams = {
-      calendarId: 'primary',
+      calendarId: calendarId,
       timeMin: timeMin || (new Date()).toISOString(),
       maxResults: parseInt(maxResults, 10) || 10,
       singleEvents: true,
@@ -538,6 +559,7 @@ async function listEvents(calendar, { timeMin, maxResults = 10, timeMax, q }) {
     
     return response.data.items.map(event => ({
       id: event.id,
+      calendarId: calendarId,
       summary: event.summary || '',
       description: event.description || '',
       start: event.start,
@@ -560,7 +582,7 @@ async function listEvents(calendar, { timeMin, maxResults = 10, timeMax, q }) {
  * @param {Object} params - Event parameters
  * @returns {Object} Created event details
  */
-async function createEvent(calendar, { summary, description, start, end, location }) {
+async function createEvent(calendar, { calendarId = 'primary', summary, description, start, end, location }) {
   try {
     // Validate date formats
     if (start && typeof start === 'object' && start.dateTime) {
@@ -588,12 +610,13 @@ async function createEvent(calendar, { summary, description, start, end, locatio
     };
     
     const response = await calendar.events.insert({
-      calendarId: 'primary',
+      calendarId: calendarId,
       resource: event,
     });
     
     return {
       id: response.data.id,
+      calendarId: calendarId,
       htmlLink: response.data.htmlLink,
       status: response.data.status,
       created: response.data.created
@@ -610,19 +633,20 @@ async function createEvent(calendar, { summary, description, start, end, locatio
  * @param {Object} params - Parameters with eventId
  * @returns {Object} Event details
  */
-async function getEvent(calendar, { eventId }) {
+async function getEvent(calendar, { calendarId = 'primary', eventId }) {
   try {
     if (!eventId) {
       throw new Error('Event ID is required');
     }
     
     const response = await calendar.events.get({
-      calendarId: 'primary',
+      calendarId: calendarId,
       eventId: eventId
     });
     
     return {
       id: response.data.id,
+      calendarId: calendarId,
       summary: response.data.summary || '',
       description: response.data.description || '',
       start: response.data.start,
@@ -639,7 +663,7 @@ async function getEvent(calendar, { eventId }) {
     
     // Handle specific error cases
     if (error.code === 404) {
-      throw new Error(`Event not found with ID: ${eventId}`);
+      throw new Error(`Event not found with ID: ${eventId} in calendar: ${calendarId}`);
     }
     
     throw error;
@@ -652,7 +676,7 @@ async function getEvent(calendar, { eventId }) {
  * @param {Object} params - Parameters for updating the event
  * @returns {Object} Updated event details
  */
-async function updateEvent(calendar, { eventId, summary, description, start, end, location }) {
+async function updateEvent(calendar, { calendarId = 'primary', eventId, summary, description, start, end, location }) {
   try {
     if (!eventId) {
       throw new Error('Event ID is required');
@@ -660,7 +684,7 @@ async function updateEvent(calendar, { eventId, summary, description, start, end
     
     // First get the existing event to ensure it exists and to preserve fields not being updated
     const currentEvent = await calendar.events.get({
-      calendarId: 'primary',
+      calendarId: calendarId,
       eventId: eventId
     });
     
@@ -695,13 +719,14 @@ async function updateEvent(calendar, { eventId, summary, description, start, end
     
     // Send the update request
     const response = await calendar.events.update({
-      calendarId: 'primary',
+      calendarId: calendarId,
       eventId: eventId,
       resource: eventUpdate
     });
     
     return {
       id: response.data.id,
+      calendarId: calendarId,
       summary: response.data.summary || '',
       description: response.data.description || '',
       start: response.data.start,
@@ -716,7 +741,7 @@ async function updateEvent(calendar, { eventId, summary, description, start, end
     
     // Handle specific error cases
     if (error.code === 404) {
-      throw new Error(`Event not found with ID: ${eventId}`);
+      throw new Error(`Event not found with ID: ${eventId} in calendar: ${calendarId}`);
     }
     
     throw error;
@@ -729,7 +754,7 @@ async function updateEvent(calendar, { eventId, summary, description, start, end
  * @param {Object} params - Parameters with eventId
  * @returns {Object} Deletion status
  */
-async function deleteEvent(calendar, { eventId }) {
+async function deleteEvent(calendar, { calendarId = 'primary', eventId }) {
   try {
     if (!eventId) {
       throw new Error('Event ID is required');
@@ -737,18 +762,19 @@ async function deleteEvent(calendar, { eventId }) {
     
     // Verify the event exists first
     await calendar.events.get({
-      calendarId: 'primary',
+      calendarId: calendarId,
       eventId: eventId
     });
     
     // Delete the event
     await calendar.events.delete({
-      calendarId: 'primary',
+      calendarId: calendarId,
       eventId: eventId
     });
     
     return {
       eventId: eventId,
+      calendarId: calendarId,
       deleted: true,
       timestamp: new Date().toISOString()
     };
@@ -757,7 +783,7 @@ async function deleteEvent(calendar, { eventId }) {
     
     // Handle specific error cases
     if (error.code === 404) {
-      throw new Error(`Event not found with ID: ${eventId}`);
+      throw new Error(`Event not found with ID: ${eventId} in calendar: ${calendarId}`);
     }
     
     throw error;
@@ -770,7 +796,7 @@ async function deleteEvent(calendar, { eventId }) {
  * @param {Object} params - Parameters for finding duplicates
  * @returns {Object} List of potential duplicate groups
  */
-async function findDuplicateEvents(calendar, { timeMin, timeMax, similarityThreshold = 0.7 }) {
+async function findDuplicateEvents(calendar, { calendarId = 'primary', timeMin, timeMax, similarityThreshold = 0.7 }) {
   try {
     // Default time range if not specified (from now to 30 days in the future)
     const now = new Date();
@@ -779,7 +805,7 @@ async function findDuplicateEvents(calendar, { timeMin, timeMax, similarityThres
     
     // Build request parameters
     const requestParams = {
-      calendarId: 'primary',
+      calendarId: calendarId,
       timeMin: timeMin || defaultTimeMin,
       timeMax: timeMax || defaultTimeMax,
       maxResults: 2500, // Get a large number of events to find duplicates
@@ -793,7 +819,8 @@ async function findDuplicateEvents(calendar, { timeMin, timeMax, similarityThres
     if (!response.data.items || response.data.items.length === 0) {
       return { 
         duplicateGroups: [],
-        message: "No events found in the specified time range" 
+        message: "No events found in the specified time range",
+        calendarId: calendarId 
       };
     }
     
@@ -887,6 +914,7 @@ async function findDuplicateEvents(calendar, { timeMin, timeMax, similarityThres
         duplicateGroups.push({
           events: duplicates.map(event => ({
             id: event.id,
+            calendarId: calendarId,
             summary: event.summary || '',
             description: event.description || '',
             start: event.start,
@@ -906,6 +934,7 @@ async function findDuplicateEvents(calendar, { timeMin, timeMax, similarityThres
     return {
       duplicateGroups,
       count: duplicateGroups.length,
+      calendarId: calendarId,
       timeRange: {
         from: requestParams.timeMin,
         to: requestParams.timeMax
@@ -917,11 +946,42 @@ async function findDuplicateEvents(calendar, { timeMin, timeMax, similarityThres
   }
 }
 
+/**
+ * List available calendars the user has access to
+ * @param {Object} calendar - Google Calendar API client
+ * @returns {Array} Array of calendar objects
+ */
+async function listCalendars(calendar) {
+  try {
+    const response = await calendar.calendarList.list();
+    
+    if (!response.data.items) {
+      return [];
+    }
+    
+    return response.data.items.map(calendar => ({
+      id: calendar.id,
+      summary: calendar.summary || '',
+      description: calendar.description || '',
+      primary: calendar.primary || false,
+      accessRole: calendar.accessRole || '',
+      backgroundColor: calendar.backgroundColor || '#000000',
+      foregroundColor: calendar.foregroundColor || '#FFFFFF',
+      timeZone: calendar.timeZone || 'UTC',
+      selected: calendar.selected || false
+    }));
+  } catch (error) {
+    console.error('Error listing calendars:', error);
+    throw error;
+  }
+}
+
 module.exports = { 
   app, 
   validateParams, 
   ErrorTypes,
   // Export functions for testing
+  listCalendars,
   listEvents,
   createEvent,
   getEvent,
