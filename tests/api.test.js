@@ -28,11 +28,14 @@ describe('API Endpoints', () => {
       expect(res.body).toHaveProperty('version');
       expect(res.body).toHaveProperty('actions');
       expect(res.body.actions).toHaveProperty('list_events');
+      expect(res.body.actions).toHaveProperty('list_recurring_instances');
       expect(res.body.actions).toHaveProperty('create_event');
       expect(res.body.actions).toHaveProperty('get_event');
       expect(res.body.actions).toHaveProperty('update_event');
       expect(res.body.actions).toHaveProperty('delete_event');
       expect(res.body.actions).toHaveProperty('find_duplicates');
+      expect(res.body.actions).toHaveProperty('batch_operations');
+      expect(res.body.actions).toHaveProperty('advanced_search_events');
     });
   });
   

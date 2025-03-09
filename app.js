@@ -123,15 +123,45 @@ app.get('/mcp/definition', (req, res) => {
           timeMin: "ISO date string for the earliest event time (defaults to current time if not specified)",
           timeMax: "ISO date string for the latest event time",
           maxResults: "Maximum number of events to return (defaults to 10)",
-          q: "Free text search term to find events that match"
+          q: "Free text search term to find events that match",
+          orderBy: "Sorting order: 'startTime' (default) or 'updated'",
+          pageToken: "Token for retrieving the next page of results",
+          syncToken: "Token for incremental sync",
+          timeZone: "Time zone used in the response",
+          showDeleted: "Whether to include deleted events (defaults to false)",
+          showHiddenInvitations: "Whether to include hidden invitations (defaults to false)",
+          singleEvents: "Whether to expand recurring events (defaults to true)",
+          updatedMin: "Lower bound for an event's last modification time (ISO date string)",
+          iCalUID: "Filter by specific iCalendar UID"
         },
         response: {
           status: "success or error",
-          data: "Array of event objects (if successful)",
+          data: {
+            events: "Array of event objects",
+            nextPageToken: "Token for the next page of results (if available)",
+            syncToken: "Token for future incremental sync (if available)"
+          },
           error: "Error message (if failed)",
           error_type: "Type of error that occurred (if failed)"
         },
         required_parameters: ["timeMin (defaults to current time if omitted)"]
+      },
+      list_recurring_instances: {
+        description: "List all instances of a recurring event",
+        parameters: {
+          calendarId: "ID of the calendar to use (defaults to 'primary')",
+          eventId: "ID of the recurring event to get instances for (required)",
+          timeMin: "ISO date string for the earliest event time (defaults to current time)",
+          timeMax: "ISO date string for the latest event time",
+          maxResults: "Maximum number of instances to return (defaults to 10)"
+        },
+        response: {
+          status: "success or error",
+          data: "Array of event instance objects (if successful)",
+          error: "Error message (if failed)",
+          error_type: "Type of error that occurred (if failed)"
+        },
+        required_parameters: ["eventId"]
       },
       create_event: {
         description: "Create a new calendar event",
@@ -141,7 +171,10 @@ app.get('/mcp/definition', (req, res) => {
           description: "Event description (optional)",
           start: "Event start time object with dateTime and timeZone (required)",
           end: "Event end time object with dateTime and timeZone (required)",
-          location: "Event location (optional)"
+          location: "Event location (optional)",
+          recurrence: "Array of RRULE strings for recurring events (optional, e.g. ['RRULE:FREQ=DAILY;COUNT=5'])",
+          attendees: "Array of attendee email addresses (optional)",
+          sendUpdates: "Preference for sending email updates (optional, 'all', 'externalOnly', or 'none')"
         },
         response: {
           status: "success or error",
@@ -174,7 +207,10 @@ app.get('/mcp/definition', (req, res) => {
           description: "New event description (optional)",
           start: "New event start time object with dateTime and timeZone (optional)",
           end: "New event end time object with dateTime and timeZone (optional)",
-          location: "New event location (optional)"
+          location: "New event location (optional)",
+          recurrence: "Array of RRULE strings for recurring events (optional, e.g. ['RRULE:FREQ=DAILY;COUNT=5'])",
+          attendees: "Array of attendee email addresses (optional)",
+          sendUpdates: "Preference for sending email updates (optional, 'all', 'externalOnly', or 'none')"
         },
         response: {
           status: "success or error",
@@ -188,7 +224,8 @@ app.get('/mcp/definition', (req, res) => {
         description: "Delete a calendar event",
         parameters: {
           calendarId: "ID of the calendar to use (defaults to 'primary')",
-          eventId: "ID of the event to delete (required)"
+          eventId: "ID of the event to delete (required)",
+          sendUpdates: "Preference for sending email updates (optional, 'all', 'externalOnly', or 'none')"
         },
         response: {
           status: "success or error",
@@ -209,6 +246,45 @@ app.get('/mcp/definition', (req, res) => {
         response: {
           status: "success or error",
           data: "Groups of potential duplicate events (if successful)",
+          error: "Error message (if failed)",
+          error_type: "Type of error that occurred (if failed)"
+        },
+        required_parameters: []
+      },
+      batch_operations: {
+        description: "Execute multiple calendar operations in a single request",
+        parameters: {
+          operations: "Array of operations to perform, each with 'action' and 'parameters' properties"
+        },
+        response: {
+          status: "success or error",
+          data: "Results of batch operations (if successful)",
+          error: "Error message (if failed)",
+          error_type: "Type of error that occurred (if failed)"
+        },
+        required_parameters: ["operations"]
+      },
+      advanced_search_events: {
+        description: "Advanced search for events with complex filtering options",
+        parameters: {
+          calendarId: "ID of the calendar to use (defaults to 'primary')",
+          timeRange: "Object with 'start' and 'end' properties (ISO date strings)",
+          textSearch: "Search term for event title/description",
+          location: "Filter by event location (substring match)",
+          attendees: "Array of email addresses to filter by attendance",
+          status: "Filter by event status ('confirmed', 'tentative', or 'cancelled')",
+          createdAfter: "ISO date string to filter by creation time",
+          updatedAfter: "ISO date string to filter by last update time",
+          hasAttachments: "Filter to events that have attachments (boolean)",
+          isRecurring: "Filter to recurring events or instances (boolean)",
+          maxResults: "Maximum number of events to return (defaults to 100)"
+        },
+        response: {
+          status: "success or error",
+          data: {
+            events: "Array of matching event objects",
+            totalMatches: "Total number of events that matched the criteria"
+          },
           error: "Error message (if failed)",
           error_type: "Type of error that occurred (if failed)"
         },
@@ -300,6 +376,19 @@ app.post('/mcp/execute', async (req, res) => {
         result = await listEvents(calendar, parameters || {});
         break;
         
+      case 'list_recurring_instances':
+        // Validate required parameters
+        validationError = validateParams(parameters, ['eventId']);
+        if (validationError) {
+          return res.json({
+            status: 'error',
+            error_type: ErrorTypes.VALIDATION,
+            error: validationError
+          });
+        }
+        result = await listRecurringInstances(calendar, parameters);
+        break;
+        
       case 'create_event':
         // Validate required parameters
         validationError = validateParams(parameters, ['summary', 'start', 'end']);
@@ -378,6 +467,81 @@ app.post('/mcp/execute', async (req, res) => {
           parameters.similarityThreshold = threshold;
         }
         result = await findDuplicateEvents(calendar, parameters || {});
+        break;
+        
+      case 'batch_operations':
+        // Validate required parameters
+        validationError = validateParams(parameters, ['operations']);
+        if (validationError) {
+          return res.json({
+            status: 'error',
+            error_type: ErrorTypes.VALIDATION,
+            error: validationError
+          });
+        }
+        
+        // Validate that operations is an array
+        if (!Array.isArray(parameters.operations)) {
+          return res.json({
+            status: 'error',
+            error_type: ErrorTypes.VALIDATION,
+            error: 'operations must be an array'
+          });
+        }
+        
+        // Execute batch operations
+        result = await batchOperations(calendar, parameters);
+        break;
+        
+      case 'advanced_search_events':
+        // Validate time range if provided
+        if (parameters && parameters.timeRange) {
+          // If timeRange is provided, it should be an object
+          if (typeof parameters.timeRange !== 'object') {
+            return res.json({
+              status: 'error',
+              error_type: ErrorTypes.VALIDATION,
+              error: 'timeRange must be an object with start and/or end properties'
+            });
+          }
+          
+          // Check date formats if provided
+          if (parameters.timeRange.start) {
+            try {
+              new Date(parameters.timeRange.start);
+            } catch (e) {
+              return res.json({
+                status: 'error',
+                error_type: ErrorTypes.VALIDATION,
+                error: 'Invalid timeRange.start format. Use ISO 8601 format.'
+              });
+            }
+          }
+          
+          if (parameters.timeRange.end) {
+            try {
+              new Date(parameters.timeRange.end);
+            } catch (e) {
+              return res.json({
+                status: 'error',
+                error_type: ErrorTypes.VALIDATION,
+                error: 'Invalid timeRange.end format. Use ISO 8601 format.'
+              });
+            }
+          }
+        }
+        
+        // Validate attendees if provided
+        if (parameters && parameters.attendees && !Array.isArray(parameters.attendees)) {
+          return res.json({
+            status: 'error',
+            error_type: ErrorTypes.VALIDATION,
+            error: 'attendees must be an array of email addresses'
+          });
+        }
+        
+        // Execute advanced search
+        result = await advancedSearchEvents(calendar, parameters || {});
         break;
         
       default:
@@ -534,30 +698,59 @@ app.get('/auth/google/callback', async (req, res) => {
  * List calendar events with optional filters
  * @param {Object} calendar - Google Calendar API client
  * @param {Object} params - Parameters for listing events
- * @returns {Array} Array of calendar events
+ * @returns {Object} Object containing events array and pagination tokens
  */
-async function listEvents(calendar, { calendarId = 'primary', timeMin, maxResults = 10, timeMax, q }) {
+async function listEvents(calendar, { 
+  calendarId = 'primary', 
+  timeMin, 
+  maxResults = 10, 
+  timeMax, 
+  q,
+  orderBy = 'startTime',
+  pageToken,
+  syncToken,
+  timeZone,
+  showDeleted = false,
+  showHiddenInvitations = false,
+  singleEvents = true,
+  updatedMin,
+  iCalUID
+}) {
   try {
     // Build request parameters with all available filters
     const requestParams = {
       calendarId: calendarId,
       timeMin: timeMin || (new Date()).toISOString(),
       maxResults: parseInt(maxResults, 10) || 10,
-      singleEvents: true,
-      orderBy: 'startTime',
+      singleEvents: singleEvents !== false, // Default to true unless explicitly set to false
+      orderBy: ['startTime', 'updated'].includes(orderBy) ? orderBy : 'startTime',
     };
     
     // Add optional parameters if provided
     if (timeMax) requestParams.timeMax = timeMax;
     if (q) requestParams.q = q;
+    if (pageToken) requestParams.pageToken = pageToken;
+    if (syncToken) requestParams.syncToken = syncToken;
+    if (timeZone) requestParams.timeZone = timeZone;
+    if (showDeleted === true) requestParams.showDeleted = true;
+    if (showHiddenInvitations === true) requestParams.showHiddenInvitations = true;
+    if (updatedMin) requestParams.updatedMin = updatedMin;
+    if (iCalUID) requestParams.iCalUID = iCalUID;
     
     const response = await calendar.events.list(requestParams);
     
+    // Prepare result object with pagination tokens
+    const result = {
+      events: [],
+      nextPageToken: response.data.nextPageToken || null,
+      syncToken: response.data.nextSyncToken || null
+    };
+    
     if (!response.data.items) {
-      return [];
+      return result;
     }
     
-    return response.data.items.map(event => ({
+    result.events = response.data.items.map(event => ({
       id: event.id,
       calendarId: calendarId,
       summary: event.summary || '',
@@ -568,8 +761,18 @@ async function listEvents(calendar, { calendarId = 'primary', timeMin, maxResult
       htmlLink: event.htmlLink,
       created: event.created,
       updated: event.updated,
-      status: event.status
+      status: event.status,
+      recurrence: event.recurrence || null,
+      recurringEventId: event.recurringEventId || null,
+      originalStartTime: event.originalStartTime || null,
+      isRecurringEvent: Boolean(event.recurrence),
+      isRecurringInstance: Boolean(event.recurringEventId),
+      attendees: event.attendees || [],
+      organizer: event.organizer || null,
+      hasAttachments: Boolean(event.attachments && event.attachments.length > 0)
     }));
+    
+    return result;
   } catch (error) {
     console.error('Error listing events:', error);
     throw error;
@@ -582,7 +785,7 @@ async function listEvents(calendar, { calendarId = 'primary', timeMin, maxResult
  * @param {Object} params - Event parameters
  * @returns {Object} Created event details
  */
-async function createEvent(calendar, { calendarId = 'primary', summary, description, start, end, location }) {
+async function createEvent(calendar, { calendarId = 'primary', summary, description, start, end, location, recurrence, attendees, sendUpdates }) {
   try {
     // Validate date formats
     if (start && typeof start === 'object' && start.dateTime) {
@@ -601,6 +804,7 @@ async function createEvent(calendar, { calendarId = 'primary', summary, descript
       }
     }
     
+    // Create base event object
     const event = {
       summary,
       description: description || '',
@@ -609,17 +813,38 @@ async function createEvent(calendar, { calendarId = 'primary', summary, descript
       location: location || ''
     };
     
-    const response = await calendar.events.insert({
-      calendarId: calendarId,
-      resource: event,
-    });
+    // Add recurrence if provided
+    if (recurrence && Array.isArray(recurrence)) {
+      event.recurrence = recurrence;
+    }
     
+    // Add attendees if provided
+    if (attendees && Array.isArray(attendees)) {
+      event.attendees = attendees.map(email => ({ email }));
+    }
+    
+    // Prepare request parameters
+    const requestParams = {
+      calendarId: calendarId,
+      resource: event
+    };
+    
+    // Add sendUpdates if provided
+    if (sendUpdates && ['all', 'externalOnly', 'none'].includes(sendUpdates)) {
+      requestParams.sendUpdates = sendUpdates;
+    }
+    
+    const response = await calendar.events.insert(requestParams);
+    
+    // Return event details including recurrence information if available
     return {
       id: response.data.id,
       calendarId: calendarId,
       htmlLink: response.data.htmlLink,
       status: response.data.status,
-      created: response.data.created
+      created: response.data.created,
+      recurrence: response.data.recurrence || null,
+      recurringEventId: response.data.recurringEventId || null
     };
   } catch (error) {
     console.error('Error creating event:', error);
@@ -656,7 +881,11 @@ async function getEvent(calendar, { calendarId = 'primary', eventId }) {
       created: response.data.created,
       updated: response.data.updated,
       status: response.data.status,
-      attendees: response.data.attendees || []
+      attendees: response.data.attendees || [],
+      recurrence: response.data.recurrence || null,
+      recurringEventId: response.data.recurringEventId || null,
+      // For recurring events, include the instance info
+      originalStartTime: response.data.originalStartTime || null
     };
   } catch (error) {
     console.error('Error getting event:', error);
@@ -676,7 +905,7 @@ async function getEvent(calendar, { calendarId = 'primary', eventId }) {
  * @param {Object} params - Parameters for updating the event
  * @returns {Object} Updated event details
  */
-async function updateEvent(calendar, { calendarId = 'primary', eventId, summary, description, start, end, location }) {
+async function updateEvent(calendar, { calendarId = 'primary', eventId, summary, description, start, end, location, recurrence, attendees, sendUpdates }) {
   try {
     if (!eventId) {
       throw new Error('Event ID is required');
@@ -700,6 +929,28 @@ async function updateEvent(calendar, { calendarId = 'primary', eventId, summary,
     if (end !== undefined) eventUpdate.end = end;
     if (location !== undefined) eventUpdate.location = location;
     
+    // Update recurrence if provided
+    if (recurrence !== undefined) {
+      if (recurrence === null) {
+        // Remove recurrence
+        delete eventUpdate.recurrence;
+      } else if (Array.isArray(recurrence)) {
+        // Update recurrence
+        eventUpdate.recurrence = recurrence;
+      }
+    }
+    
+    // Update attendees if provided
+    if (attendees !== undefined) {
+      if (attendees === null) {
+        // Remove attendees
+        delete eventUpdate.attendees;
+      } else if (Array.isArray(attendees)) {
+        // Update attendees
+        eventUpdate.attendees = attendees.map(email => ({ email }));
+      }
+    }
+    
     // Validate date formats if provided
     if (start && typeof start === 'object' && start.dateTime) {
       try {
@@ -717,12 +968,20 @@ async function updateEvent(calendar, { calendarId = 'primary', eventId, summary,
       }
     }
     
-    // Send the update request
-    const response = await calendar.events.update({
+    // Prepare request parameters
+    const requestParams = {
       calendarId: calendarId,
       eventId: eventId,
       resource: eventUpdate
-    });
+    };
+    
+    // Add sendUpdates if provided
+    if (sendUpdates && ['all', 'externalOnly', 'none'].includes(sendUpdates)) {
+      requestParams.sendUpdates = sendUpdates;
+    }
+    
+    // Send the update request
+    const response = await calendar.events.update(requestParams);
     
     return {
       id: response.data.id,
@@ -734,7 +993,10 @@ async function updateEvent(calendar, { calendarId = 'primary', eventId, summary,
       location: response.data.location || '',
       htmlLink: response.data.htmlLink,
       updated: response.data.updated,
-      status: response.data.status
+      status: response.data.status,
+      recurrence: response.data.recurrence || null,
+      recurringEventId: response.data.recurringEventId || null,
+      attendees: response.data.attendees || []
     };
   } catch (error) {
     console.error('Error updating event:', error);
@@ -754,28 +1016,40 @@ async function updateEvent(calendar, { calendarId = 'primary', eventId, summary,
  * @param {Object} params - Parameters with eventId
  * @returns {Object} Deletion status
  */
-async function deleteEvent(calendar, { calendarId = 'primary', eventId }) {
+async function deleteEvent(calendar, { calendarId = 'primary', eventId, sendUpdates }) {
   try {
     if (!eventId) {
       throw new Error('Event ID is required');
     }
     
     // Verify the event exists first
-    await calendar.events.get({
+    const eventResponse = await calendar.events.get({
       calendarId: calendarId,
       eventId: eventId
     });
     
-    // Delete the event
-    await calendar.events.delete({
+    // Check if this is a recurring event
+    const isRecurring = eventResponse.data.recurrence || eventResponse.data.recurringEventId;
+    
+    // Prepare request parameters
+    const requestParams = {
       calendarId: calendarId,
       eventId: eventId
-    });
+    };
+    
+    // Add sendUpdates if provided
+    if (sendUpdates && ['all', 'externalOnly', 'none'].includes(sendUpdates)) {
+      requestParams.sendUpdates = sendUpdates;
+    }
+    
+    // Delete the event
+    await calendar.events.delete(requestParams);
     
     return {
       eventId: eventId,
       calendarId: calendarId,
       deleted: true,
+      wasRecurring: Boolean(isRecurring),
       timestamp: new Date().toISOString()
     };
   } catch (error) {
@@ -976,6 +1250,419 @@ async function listCalendars(calendar) {
   }
 }
 
+/**
+ * List all instances of a recurring event
+ * @param {Object} calendar - Google Calendar API client
+ * @param {Object} params - Parameters for listing instances
+ * @returns {Array} Array of event instances
+ */
+async function listRecurringInstances(calendar, { calendarId = 'primary', eventId, timeMin, timeMax, maxResults = 10 }) {
+  try {
+    if (!eventId) {
+      throw new Error('Event ID is required');
+    }
+    
+    // First get the event to verify it exists and check if it's recurring
+    const eventResponse = await calendar.events.get({
+      calendarId: calendarId,
+      eventId: eventId
+    });
+    
+    // Check if it's a recurring event (has recurrence rules)
+    const isRecurring = Boolean(eventResponse.data.recurrence);
+    
+    if (!isRecurring) {
+      // Return the single event in an array if it's not recurring
+      return [{
+        id: eventResponse.data.id,
+        calendarId: calendarId,
+        summary: eventResponse.data.summary || '',
+        description: eventResponse.data.description || '',
+        start: eventResponse.data.start,
+        end: eventResponse.data.end,
+        location: eventResponse.data.location || '',
+        htmlLink: eventResponse.data.htmlLink,
+        isRecurringEvent: false,
+        recurrence: null,
+        message: "This is not a recurring event"
+      }];
+    }
+    
+    // Build request parameters
+    const requestParams = {
+      calendarId: calendarId,
+      eventId: eventId,
+      maxResults: parseInt(maxResults, 10) || 10
+    };
+    
+    // Add optional time parameters if provided
+    if (timeMin) requestParams.timeMin = timeMin;
+    if (timeMax) requestParams.timeMax = timeMax;
+    
+    // Get instances of the recurring event
+    const response = await calendar.events.instances(requestParams);
+    
+    if (!response.data.items) {
+      return [];
+    }
+    
+    return response.data.items.map(instance => ({
+      id: instance.id,
+      calendarId: calendarId,
+      summary: instance.summary || '',
+      description: instance.description || '',
+      start: instance.start,
+      end: instance.end,
+      location: instance.location || '',
+      htmlLink: instance.htmlLink,
+      created: instance.created,
+      updated: instance.updated,
+      status: instance.status,
+      recurringEventId: instance.recurringEventId,
+      originalStartTime: instance.originalStartTime,
+      isRecurringInstance: true
+    }));
+  } catch (error) {
+    console.error('Error listing recurring event instances:', error);
+    
+    // Handle specific error cases
+    if (error.code === 404) {
+      throw new Error(`Event not found with ID: ${eventId} in calendar: ${calendarId}`);
+    }
+    
+    throw error;
+  }
+}
+
+/**
+ * Execute batch operations on calendar events
+ * @param {Object} calendar - Google Calendar API client
+ * @param {Object} params - Parameters for batch operations
+ * @returns {Array} Results of batch operations
+ */
+async function batchOperations(calendar, { operations = [] }) {
+  try {
+    if (!Array.isArray(operations) || operations.length === 0) {
+      throw new Error('No operations provided for batch processing');
+    }
+    
+    // Validate each operation
+    for (const op of operations) {
+      if (!op.action) {
+        throw new Error('Each operation must have an action property');
+      }
+      if (!op.parameters) {
+        throw new Error('Each operation must have parameters');
+      }
+    }
+    
+    // Track results
+    const results = [];
+    
+    // Process operations sequentially
+    // Note: We're not using true batch API calls here as it requires more complex setup
+    // This implementation processes requests sequentially but in a single request to our MCP
+    for (let i = 0; i < operations.length; i++) {
+      const { action, parameters } = operations[i];
+      let result;
+      
+      try {
+        switch (action) {
+          case 'create_event':
+            // Validate required parameters
+            const createError = validateParams(parameters, ['summary', 'start', 'end']);
+            if (createError) {
+              results.push({
+                action: 'create_event',
+                success: false,
+                error: createError,
+                error_type: ErrorTypes.VALIDATION
+              });
+              continue;
+            }
+            result = await createEvent(calendar, parameters);
+            results.push({
+              action: 'create_event',
+              success: true,
+              data: result
+            });
+            break;
+            
+          case 'update_event':
+            // Validate required parameters
+            const updateError = validateParams(parameters, ['eventId']);
+            if (updateError) {
+              results.push({
+                action: 'update_event',
+                success: false,
+                error: updateError,
+                error_type: ErrorTypes.VALIDATION
+              });
+              continue;
+            }
+            
+            // Make sure at least one field to update is provided
+            if (!parameters.summary && !parameters.description && 
+                !parameters.start && !parameters.end && !parameters.location &&
+                !parameters.recurrence && !parameters.attendees) {
+              results.push({
+                action: 'update_event',
+                success: false,
+                error: 'At least one field to update must be provided',
+                error_type: ErrorTypes.VALIDATION
+              });
+              continue;
+            }
+            
+            result = await updateEvent(calendar, parameters);
+            results.push({
+              action: 'update_event',
+              success: true,
+              data: result
+            });
+            break;
+            
+          case 'delete_event':
+            // Validate required parameters
+            const deleteError = validateParams(parameters, ['eventId']);
+            if (deleteError) {
+              results.push({
+                action: 'delete_event',
+                success: false,
+                error: deleteError,
+                error_type: ErrorTypes.VALIDATION
+              });
+              continue;
+            }
+            
+            result = await deleteEvent(calendar, parameters);
+            results.push({
+              action: 'delete_event',
+              success: true,
+              data: result
+            });
+            break;
+            
+          case 'get_event':
+            // Validate required parameters
+            const getError = validateParams(parameters, ['eventId']);
+            if (getError) {
+              results.push({
+                action: 'get_event',
+                success: false,
+                error: getError,
+                error_type: ErrorTypes.VALIDATION
+              });
+              continue;
+            }
+            
+            result = await getEvent(calendar, parameters);
+            results.push({
+              action: 'get_event',
+              success: true,
+              data: result
+            });
+            break;
+            
+          default:
+            results.push({
+              action: action,
+              success: false,
+              error: `Unsupported action in batch operation: ${action}`,
+              error_type: ErrorTypes.VALIDATION
+            });
+        }
+      } catch (error) {
+        console.error(`Error in batch operation (${action}):`, error);
+        
+        // Categorize errors
+        let errorType = ErrorTypes.SERVER_ERROR;
+        let errorMessage = error.message || 'An unexpected error occurred';
+        
+        if (error.code === 404) {
+          errorType = ErrorTypes.NOT_FOUND;
+        } else if (error.code === 401 || error.code === 403) {
+          errorType = ErrorTypes.AUTHENTICATION;
+        } else if (error.errors && error.errors.length > 0) {
+          errorType = ErrorTypes.API_ERROR;
+          errorMessage = error.errors[0].message;
+        }
+        
+        results.push({
+          action: action,
+          success: false,
+          error: errorMessage,
+          error_type: errorType
+        });
+      }
+    }
+    
+    return {
+      operations_count: operations.length,
+      results: results,
+      success_count: results.filter(r => r.success).length,
+      error_count: results.filter(r => !r.success).length
+    };
+  } catch (error) {
+    console.error('Error executing batch operations:', error);
+    throw error;
+  }
+}
+
+/**
+ * Advanced search for events with complex filtering
+ * @param {Object} calendar - Google Calendar API client
+ * @param {Object} params - Parameters for advanced search
+ * @returns {Object} Object containing filtered events and stats
+ */
+async function advancedSearchEvents(calendar, {
+  calendarId = 'primary',
+  timeRange,
+  textSearch,
+  location,
+  attendees,
+  status,
+  createdAfter,
+  updatedAfter,
+  hasAttachments,
+  isRecurring,
+  maxResults = 100
+}) {
+  try {
+    // Build initial request parameters for Google Calendar API
+    const requestParams = {
+      calendarId: calendarId,
+      maxResults: 2500, // Get more events to allow for client-side filtering
+      singleEvents: true,
+      orderBy: 'startTime'
+    };
+    
+    // Add time range if provided
+    if (timeRange) {
+      if (timeRange.start) requestParams.timeMin = timeRange.start;
+      if (timeRange.end) requestParams.timeMax = timeRange.end;
+    } else {
+      // Default to events from now forward
+      requestParams.timeMin = new Date().toISOString();
+    }
+    
+    // Add text search if provided (this is passed directly to the API)
+    if (textSearch) requestParams.q = textSearch;
+    
+    // Add updated time filter if provided (this is passed directly to the API)
+    if (updatedAfter) requestParams.updatedMin = updatedAfter;
+    
+    // Get events from the API
+    const response = await calendar.events.list(requestParams);
+    
+    if (!response.data.items || response.data.items.length === 0) {
+      return { 
+        events: [],
+        totalMatches: 0
+      };
+    }
+    
+    // Start with all events
+    let filteredEvents = response.data.items;
+    
+    // Apply additional client-side filtering for criteria not supported by the API
+    
+    // Filter by location
+    if (location) {
+      const locationLower = location.toLowerCase();
+      filteredEvents = filteredEvents.filter(event => 
+        event.location && event.location.toLowerCase().includes(locationLower)
+      );
+    }
+    
+    // Filter by attendees
+    if (attendees && Array.isArray(attendees) && attendees.length > 0) {
+      filteredEvents = filteredEvents.filter(event => {
+        if (!event.attendees || event.attendees.length === 0) return false;
+        
+        return attendees.some(email => 
+          event.attendees.some(a => 
+            a.email && a.email.toLowerCase() === email.toLowerCase()
+          )
+        );
+      });
+    }
+    
+    // Filter by event status
+    if (status && ['confirmed', 'tentative', 'cancelled'].includes(status)) {
+      filteredEvents = filteredEvents.filter(event => event.status === status);
+    }
+    
+    // Filter by creation time
+    if (createdAfter) {
+      const createdTime = new Date(createdAfter).getTime();
+      filteredEvents = filteredEvents.filter(event => 
+        event.created && new Date(event.created).getTime() >= createdTime
+      );
+    }
+    
+    // Filter by attachments
+    if (hasAttachments === true) {
+      filteredEvents = filteredEvents.filter(event => 
+        event.attachments && event.attachments.length > 0
+      );
+    }
+    
+    // Filter by recurrence
+    if (isRecurring !== undefined) {
+      if (isRecurring === true) {
+        // Include both recurring event masters and instances
+        filteredEvents = filteredEvents.filter(event => 
+          (event.recurrence && event.recurrence.length > 0) || event.recurringEventId
+        );
+      } else {
+        // Only include single (non-recurring) events
+        filteredEvents = filteredEvents.filter(event => 
+          !event.recurrence && !event.recurringEventId
+        );
+      }
+    }
+    
+    // Get total count before limiting results
+    const totalMatches = filteredEvents.length;
+    
+    // Limit results to the requested number
+    filteredEvents = filteredEvents.slice(0, Math.min(maxResults, filteredEvents.length));
+    
+    // Map to our standard event format
+    const formattedEvents = filteredEvents.map(event => ({
+      id: event.id,
+      calendarId: calendarId,
+      summary: event.summary || '',
+      description: event.description || '',
+      start: event.start,
+      end: event.end,
+      location: event.location || '',
+      htmlLink: event.htmlLink,
+      created: event.created,
+      updated: event.updated,
+      status: event.status,
+      recurrence: event.recurrence || null,
+      recurringEventId: event.recurringEventId || null,
+      originalStartTime: event.originalStartTime || null,
+      isRecurringEvent: Boolean(event.recurrence),
+      isRecurringInstance: Boolean(event.recurringEventId),
+      attendees: event.attendees || [],
+      organizer: event.organizer || null,
+      hasAttachments: Boolean(event.attachments && event.attachments.length > 0)
+    }));
+    
+    return {
+      events: formattedEvents,
+      totalMatches: totalMatches,
+      limitApplied: totalMatches > maxResults
+    };
+  } catch (error) {
+    console.error('Error in advanced search:', error);
+    throw error;
+  }
+}
+
 module.exports = { 
   app, 
   validateParams, 
@@ -983,9 +1670,12 @@ module.exports = {
   // Export functions for testing
   listCalendars,
   listEvents,
+  listRecurringInstances,
   createEvent,
   getEvent,
   updateEvent,
   deleteEvent,
-  findDuplicateEvents
+  findDuplicateEvents,
+  batchOperations,
+  advancedSearchEvents
 };

@@ -72,6 +72,9 @@
       <button id="updateEventExample">Update Event</button>
       <button id="deleteEventExample">Delete Event</button>
       <button id="findDuplicatesExample">Find Duplicates</button>
+      <button id="batchOperationsExample">Batch Operations</button>
+      <button id="listEventsWithPaginationExample">List Events with Pagination</button>
+      <button id="advancedSearchExample">Advanced Search</button>
     </div>
     <button id="executeAction">Execute</button>
     
@@ -224,6 +227,80 @@
                     timeMin: now.toISOString(),
                     timeMax: ninetyDaysLater.toISOString(),
                     similarityThreshold: 0.7
+                }
+            }, null, 2);
+        });
+        
+        document.getElementById('batchOperationsExample').addEventListener('click', () => {
+            const tomorrow = new Date();
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            tomorrow.setHours(10, 0, 0, 0);
+            
+            const endTime = new Date(tomorrow);
+            endTime.setHours(11, 0, 0, 0);
+            
+            document.getElementById('requestBody').value = JSON.stringify({
+                action: "batch_operations",
+                parameters: {
+                    operations: [
+                        {
+                            action: "create_event",
+                            parameters: {
+                                summary: "Morning Meeting",
+                                start: {
+                                    dateTime: tomorrow.toISOString(),
+                                    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+                                },
+                                end: {
+                                    dateTime: endTime.toISOString(),
+                                    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+                                }
+                            }
+                        },
+                        {
+                            action: "list_events",
+                            parameters: {
+                                timeMin: new Date().toISOString(),
+                                maxResults: 5
+                            }
+                        }
+                    ]
+                }
+            }, null, 2);
+        });
+        
+        document.getElementById('listEventsWithPaginationExample').addEventListener('click', () => {
+            document.getElementById('requestBody').value = JSON.stringify({
+                action: "list_events",
+                parameters: {
+                    timeMin: new Date().toISOString(),
+                    maxResults: 10,
+                    orderBy: "startTime",
+                    // Note about pagination
+                    // nextPageToken: "PASTE_PAGE_TOKEN_HERE_FROM_PREVIOUS_RESPONSE"
+                }
+            }, null, 2);
+        });
+        
+        document.getElementById('advancedSearchExample').addEventListener('click', () => {
+            // Search events for the next 30 days
+            const now = new Date();
+            const thirtyDaysLater = new Date();
+            thirtyDaysLater.setDate(now.getDate() + 30);
+            
+            document.getElementById('requestBody').value = JSON.stringify({
+                action: "advanced_search_events",
+                parameters: {
+                    timeRange: {
+                        start: now.toISOString(),
+                        end: thirtyDaysLater.toISOString()
+                    },
+                    textSearch: "meeting", // Optional text search term
+                    location: "conference", // Optional location filter
+                    attendees: ["user@example.com"], // Optional attendees filter
+                    status: "confirmed", // Optional status filter
+                    isRecurring: true, // Optional filter for recurring events
+                    maxResults: 20
                 }
             }, null, 2);
         });
