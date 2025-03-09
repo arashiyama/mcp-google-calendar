@@ -6,14 +6,17 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "test": "jest"
+    "test": "jest",
+    "db:reset": "rm -f .token-store.db && node -e \"require('./db').initDatabase().then(() => console.log('Database reset successfully')).catch(err => console.error('Error resetting database:', err))\""
   },
   "dependencies": {
+    "bcrypt": "^5.1.1",
     "body-parser": "^1.20.2",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
-    "googleapis": "^128.0.0"
+    "googleapis": "^128.0.0",
+    "sqlite3": "^5.1.7"
   },
   "devDependencies": {
     "jest": "^29.7.0",
@@ -22,9 +25,17 @@
   },
   "jest": {
     "testEnvironment": "node",
-    "testPathIgnorePatterns": ["/node_modules/"],
+    "testPathIgnorePatterns": [
+      "/node_modules/"
+    ],
     "collectCoverage": true,
-    "collectCoverageFrom": ["app.js"],
-    "coverageReporters": ["text", "html"]
+    "collectCoverageFrom": [
+      "app.js",
+      "db.js"
+    ],
+    "coverageReporters": [
+      "text",
+      "html"
+    ]
   }
 }

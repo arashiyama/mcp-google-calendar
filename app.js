@@ -3,8 +3,8 @@ const { google } = require('googleapis');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const dotenv = require('dotenv');
-const fs = require('fs');
 const path = require('path');
+const db = require('./db');
 
 // Load environment variables
 dotenv.config();
@@ -32,36 +32,36 @@ const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_REDIRECT_URI
 );
 
-// Token storage
-// For development only - in production use a secure database
-const TOKEN_PATH = path.join(__dirname, '.token-cache.json');
+// Token storage using database
 let tokens = null;
 
 /**
- * Save tokens to a local file (for development purposes only)
- * In production, use a secure database
+ * Save tokens to the database
+ * @param {Object} tokenData - The token data to save
+ * @returns {Promise<void>}
  */
-function saveTokens() {
-  if (!tokens) return;
+async function saveTokens(tokenData) {
+  if (!tokenData) return;
   
   try {
-    fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokens), { encoding: 'utf8' });
-    console.log('Tokens saved to', TOKEN_PATH);
+    tokens = tokenData;
+    await db.saveTokens(tokenData);
+    console.log('Tokens saved to database');
   } catch (err) {
     console.error('Error saving tokens:', err);
   }
 }
 
 /**
- * Load tokens from local file if available
- * In production, use a secure database
+ * Load tokens from database
+ * @returns {Promise<void>}
  */
-function loadTokens() {
+async function loadTokens() {
   try {
-    if (fs.existsSync(TOKEN_PATH)) {
-      const data = fs.readFileSync(TOKEN_PATH, { encoding: 'utf8' });
-      tokens = JSON.parse(data);
-      console.log('Tokens loaded from local file');
+    const tokenData = await db.loadTokens();
+    if (tokenData) {
+      tokens = tokenData;
+      console.log('Tokens loaded from database');
       
       // Check if token is expired
       if (tokens.expiry_date && Date.now() >= tokens.expiry_date) {
@@ -73,8 +73,16 @@ function loadTokens() {
   }
 }
 
-// Try to load tokens at startup
-loadTokens();
+// Initialize database and load tokens at startup
+(async () => {
+  try {
+    await db.initDatabase();
+    await loadTokens();
+    console.log('Database initialized and tokens loaded');
+  } catch (err) {
+    console.error('Error initializing database:', err);
+  }
+})();
 
 /**
  * Validates required parameters against a provided object
@@ -344,9 +352,8 @@ app.post('/mcp/execute', async (req, res) => {
       if (tokens.expiry_date && Date.now() >= tokens.expiry_date) {
         console.log('Token expired, attempting to refresh...');
         const { credentials } = await oauth2Client.refreshToken(tokens.refresh_token);
-        tokens = credentials;
-        saveTokens(); // Save the refreshed tokens
-        console.log('Tokens refreshed and saved');
+        await saveTokens(credentials); // Save the refreshed tokens
+        console.log('Tokens refreshed and saved to database');
       }
     } catch (authError) {
       console.error('Authentication error:', authError);
@@ -625,6 +632,7 @@ app.get('/', (req, res) => {
     <p>Status: <span style="color: green;">Authenticated</span></p>
     <p>Token status: ${tokenStatus}</p>
     <p>Token expiry: ${tokenExpiry}</p>
+    <p><a href="/logout" style="display: inline-block; background-color: #f44336; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Logout</a></p>
     <hr>
     <h2>Available MCP Endpoints</h2>
     <ul>
@@ -633,7 +641,7 @@ app.get('/', (req, res) => {
     </ul>
     <p>See the client at <a href="/index.html">/index.html</a> to test the MCP server.</p>
     <hr>
-    <p><small>Note: In a production environment, you would use a proper database to store tokens.</small></p>
+    <p><small>Tokens are securely stored in a SQLite database.</small></p>
   `);
 });
 
@@ -654,14 +662,13 @@ app.get('/auth/google/callback', async (req, res) => {
     }
     
     // Store tokens and add expiry if not present
-    tokens = newTokens;
-    if (!tokens.expiry_date) {
+    if (!newTokens.expiry_date) {
       // Set default expiry (1 hour from now)
-      tokens.expiry_date = Date.now() + 3600000;
+      newTokens.expiry_date = Date.now() + 3600000;
     }
     
-    // Save tokens to file for persistence between server restarts
-    saveTokens();
+    // Save tokens to database for persistence between server restarts
+    await saveTokens(newTokens);
     
     console.log('Authentication successful, tokens received and saved');
     
@@ -1662,6 +1669,66 @@ async function advancedSearchEvents(calendar, {
     throw error;
   }
 }
+
+/**
+ * Revoke tokens and remove from database
+ * @returns {Promise<boolean>} Success status
+ */
+async function revokeTokens() {
+  try {
+    if (!tokens || !tokens.access_token) {
+      return false;
+    }
+
+    // Revoke access token with Google
+    await oauth2Client.revokeToken(tokens.access_token);
+
+    // Remove tokens from database
+    await db.deleteTokens();
+
+    // Clear in-memory tokens
+    tokens = null;
+
+    return true;
+  } catch (error) {
+    console.error('Error revoking tokens:', error);
+    return false;
+  }
+}
+
+// Logout endpoint
+app.get('/logout', async (req, res) => {
+  try {
+    const success = await revokeTokens();
+    
+    if (success) {
+      res.send(`
+        <h1>Logged Out</h1>
+        <p>You have been successfully logged out of Google Calendar.</p>
+        <p><a href="/">Return to home page</a></p>
+        <script>
+          // Redirect to home page after 3 seconds
+          setTimeout(() => {
+            window.location.href = '/';
+          }, 3000);
+        </script>
+      `);
+    } else {
+      res.send(`
+        <h1>Logout Error</h1>
+        <p>There was an error during logout. You may not have been logged in.</p>
+        <p><a href="/">Return to home page</a></p>
+      `);
+    }
+  } catch (error) {
+    console.error('Error during logout:', error);
+    res.status(500).send(`
+      <h1>Logout Error</h1>
+      <p>An unexpected error occurred during logout.</p>
+      <p><a href="/">Return to home page</a></p>
+    `);
+  }
+});
 
 module.exports = { 
   app, 

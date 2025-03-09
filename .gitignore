@@ -10,6 +10,8 @@ jspm_packages/
 .env.test.local
 .env.production.local
 .token-cache.json
+.token-cache.json.bak
+.token-store.db
 
 # Logs
 logs
