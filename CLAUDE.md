@@ -13,6 +13,8 @@
 - `npm run test:recurring` - Run recurring event exceptions tests
 - `npm run test:notifications` - Run notification system tests
 - `npm run db:reset` - Reset the database
+- `jest [file]` - Run a specific test file (e.g., `jest api.test.js`)
+- `jest -t "pattern"` - Run tests matching a specific pattern/description
 
 ## Code Style Guidelines
 - **Imports**: Group imports by type (node modules, local modules)
@@ -26,6 +28,8 @@
 - **Parameter Validation**: Validate input parameters before processing
 - **Environment Variables**: Use dotenv for configuration
 - **Documentation**: Include JSDoc comments for functions
+- **Indentation**: 2 spaces
+- **Testing**: Write unit tests for new functionality
 
 ## Project Structure
 This is a Model Context Protocol (MCP) server for Google Calendar integration.

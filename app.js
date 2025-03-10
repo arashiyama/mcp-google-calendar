@@ -14,8 +14,19 @@ dotenv.config();
 
 const app = express();
 
-// Security middleware
-app.use(helmet());
+// Security middleware with customized Content Security Policy
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "cdn.jsdelivr.net"],
+      styleSrc: ["'self'", "'unsafe-inline'", "cdn.jsdelivr.net", "data:"],
+      connectSrc: ["'self'"],
+      imgSrc: ["'self'", "data:"],
+      fontSrc: ["'self'", "cdn.jsdelivr.net", "data:"]
+    }
+  }
+}));
 
 // Rate limiting
 const apiLimiter = rateLimit({

@@ -107,7 +107,10 @@
                     </ul>
                     <ul class="navbar-nav ms-auto">
                         <li class="nav-item">
-                            <a class="nav-link" href="/logout" id="logoutLink">Logout</a>
+                            <a class="nav-link" href="/logout" id="logoutLink" style="display:none">Logout</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="btn btn-outline-light" href="#" id="loginLink" style="display:none">Login with Google</a>
                         </li>
                     </ul>
                 </div>
@@ -471,11 +474,15 @@
     <script>
         // Initialize tabs and tooltips
         document.addEventListener('DOMContentLoaded', function() {
-            // Initialize Bootstrap components
-            const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
-            const tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
-                return new bootstrap.Tooltip(tooltipTriggerEl);
-            });
+            // Debug message to verify script is running
+            console.log("DOM fully loaded - initializing components");
+            
+            try {
+                // Initialize Bootstrap components
+                const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+                const tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+                    return new bootstrap.Tooltip(tooltipTriggerEl);
+                });
             
             // Initialize the calendar once the tab is shown
             const calendarTabEl = document.querySelector('a[data-bs-target="#calendar-tab"]');
@@ -487,8 +494,51 @@
             document.getElementById('createApiKey').addEventListener('click', createApiKey);
             document.getElementById('refreshApiKeys').addEventListener('click', loadApiKeys);
             
+            // Initialize example buttons
+            document.getElementById('listCalendarsExample').addEventListener('click', listCalendarsExample);
+            document.getElementById('listEventsExample').addEventListener('click', listEventsExample);
+            document.getElementById('createEventExample').addEventListener('click', createEventExample);
+            document.getElementById('getEventExample').addEventListener('click', getEventExample);
+            document.getElementById('updateEventExample').addEventListener('click', updateEventExample);
+            document.getElementById('deleteEventExample').addEventListener('click', deleteEventExample);
+            document.getElementById('findDuplicatesExample').addEventListener('click', findDuplicatesExample);
+            
+            // Recurring events
+            document.getElementById('listRecurringInstancesExample').addEventListener('click', listRecurringInstancesExample);
+            document.getElementById('createRecurringEventExample').addEventListener('click', createRecurringEventExample);
+            document.getElementById('createEventExceptionExample').addEventListener('click', createEventExceptionExample);
+            document.getElementById('deleteEventInstanceExample').addEventListener('click', deleteEventInstanceExample);
+            
+            // Batch operations
+            document.getElementById('batchOperationsExample').addEventListener('click', batchOperationsExample);
+            document.getElementById('batchCreateEventsExample').addEventListener('click', batchCreateEventsExample);
+            document.getElementById('batchEventActionsExample').addEventListener('click', batchEventActionsExample);
+            
+            // Advanced features
+            document.getElementById('advancedSearchExample').addEventListener('click', advancedSearchExample);
+            document.getElementById('listWithPaginationExample').addEventListener('click', listWithPaginationExample);
+            document.getElementById('eventWithRemindersExample').addEventListener('click', eventWithRemindersExample);
+            document.getElementById('detectConflictsExample').addEventListener('click', detectConflictsExample);
+            document.getElementById('createEventWithConflictCheckExample').addEventListener('click', createEventWithConflictCheckExample);
+            
+            // Webhooks
+            document.getElementById('createWebhookExample').addEventListener('click', createWebhookExample);
+            document.getElementById('listWebhooksExample').addEventListener('click', listWebhooksExample);
+            document.getElementById('deleteWebhookExample').addEventListener('click', deleteWebhookExample);
+            
+            // Execute button
+            document.getElementById('executeAction').addEventListener('click', executeAction);
+            
+            // Initialize the definition fetch button
+            document.getElementById('fetchDefinition').addEventListener('click', fetchDefinition);
+            
             // Check if user is authenticated
             checkAuthentication();
+            
+            console.log("All event listeners have been attached");
+            } catch (error) {
+                console.error("Error initializing components:", error);
+            }
         });
         
         // Initialize FullCalendar
@@ -753,11 +803,20 @@
                         tab.insertAdjacentHTML('afterbegin', alertHtml);
                     });
                     
-                    // Hide logout link
+                    // Hide logout link, show login link
                     document.getElementById('logoutLink').style.display = 'none';
+                    const loginLink = document.getElementById('loginLink');
+                    loginLink.style.display = 'block';
+                    loginLink.href = result.auth_url;
+                    
+                    console.log("User not authenticated, showing login options");
                 } else {
-                    // Authenticated, load API keys
+                    // Authenticated, show logout link and load API keys
+                    document.getElementById('logoutLink').style.display = 'block';
+                    document.getElementById('loginLink').style.display = 'none';
                     loadApiKeys();
+                    
+                    console.log("User authenticated successfully");
                 }
             } catch (error) {
                 console.error('Error checking authentication:', error);
@@ -765,7 +824,7 @@
         }
         
         // Definition fetching
-        document.getElementById('fetchDefinition').addEventListener('click', async () => {
+        async function fetchDefinition() {
             try {
                 const response = await fetch('/mcp/definition');
                 const data = await response.json();
@@ -778,17 +837,17 @@
             } catch (error) {
                 document.getElementById('definition').textContent = `Error: ${error.message}`;
             }
-        });
+        }
 
         // Event Example Handlers
-        document.getElementById('listCalendarsExample').addEventListener('click', () => {
+        function listCalendarsExample() {
             document.getElementById('requestBody').value = JSON.stringify({
                 action: "list_calendars",
                 parameters: {}
             }, null, 2);
-        });
+        }
 
-        document.getElementById('listEventsExample').addEventListener('click', () => {
+        function listEventsExample() {
             document.getElementById('requestBody').value = JSON.stringify({
                 action: "list_events",
                 parameters: {
@@ -797,9 +856,9 @@
                     maxResults: 10
                 }
             }, null, 2);
-        });
+        }
         
-        document.getElementById('createEventExample').addEventListener('click', () => {
+        function createEventExample() {
             const tomorrow = new Date();
             tomorrow.setDate(tomorrow.getDate() + 1);
             tomorrow.setHours(10, 0, 0, 0);
@@ -824,19 +883,61 @@
                     }
                 }
             }, null, 2);
-        });
+        }
         
-        document.getElementById('getEventExample').addEventListener('click', () => {
-            document.getElementById('requestBody').value = JSON.stringify({
-                action: "get_event",
-                parameters: {
-                    calendarId: "primary",
-                    eventId: "EVENT_ID_HERE" // User needs to replace with actual event ID
+        function getEventExample() {
+            // First, try to get a real event ID from a list events call
+            fetch('/mcp/execute', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: "list_events",
+                    parameters: {
+                        calendarId: "primary",
+                        timeMin: new Date().toISOString(),
+                        maxResults: 1
+                    }
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                let eventId = "EVENT_ID_HERE";
+                
+                // If we got an event, use its ID
+                if (data.status === 'success' && data.data && data.data.events && data.data.events.length > 0) {
+                    eventId = data.data.events[0].id;
+                    console.log("Using real event ID:", eventId);
                 }
-            }, null, 2);
-        });
+                
+                // Update the request body
+                document.getElementById('requestBody').value = JSON.stringify({
+                    action: "get_event",
+                    parameters: {
+                        calendarId: "primary",
+                        eventId: eventId
+                    }
+                }, null, 2);
+                
+                // If we're using the placeholder, show a warning
+                if (eventId === "EVENT_ID_HERE") {
+                    document.getElementById('response').textContent = "No events found. Please create an event first or replace EVENT_ID_HERE with a valid event ID.";
+                }
+            })
+            .catch(error => {
+                console.error("Error getting events:", error);
+                document.getElementById('requestBody').value = JSON.stringify({
+                    action: "get_event",
+                    parameters: {
+                        calendarId: "primary",
+                        eventId: "EVENT_ID_HERE" // User needs to replace with actual event ID
+                    }
+                }, null, 2);
+                
+                document.getElementById('response').textContent = "⚠️ Please replace EVENT_ID_HERE with a valid event ID from your calendar.";
+            });
+        }
         
-        document.getElementById('updateEventExample').addEventListener('click', () => {
+        function updateEventExample() {
             const tomorrow = new Date();
             tomorrow.setDate(tomorrow.getDate() + 1);
             tomorrow.setHours(11, 0, 0, 0);
@@ -862,9 +963,9 @@
                     }
                 }
             }, null, 2);
-        });
+        }
         
-        document.getElementById('deleteEventExample').addEventListener('click', () => {
+        function deleteEventExample() {
             document.getElementById('requestBody').value = JSON.stringify({
                 action: "delete_event",
                 parameters: {
@@ -872,9 +973,9 @@
                     eventId: "EVENT_ID_HERE" // User needs to replace with actual event ID
                 }
             }, null, 2);
-        });
+        }
         
-        document.getElementById('findDuplicatesExample').addEventListener('click', () => {
+        function findDuplicatesExample() {
             // Default search for duplicate events in the next 90 days
             const now = new Date();
             const ninetyDaysLater = new Date();
@@ -889,9 +990,9 @@
                     similarityThreshold: 0.7
                 }
             }, null, 2);
-        });
+        }
         
-        document.getElementById('batchOperationsExample').addEventListener('click', () => {
+        function batchOperationsExample() {
             const tomorrow = new Date();
             tomorrow.setDate(tomorrow.getDate() + 1);
             tomorrow.setHours(10, 0, 0, 0);
@@ -927,9 +1028,9 @@
                     ]
                 }
             }, null, 2);
-        });
+        }
         
-        document.getElementById('listWithPaginationExample').addEventListener('click', () => {
+        function listWithPaginationExample() {
             document.getElementById('requestBody').value = JSON.stringify({
                 action: "list_events",
                 parameters: {
@@ -940,9 +1041,9 @@
                     // nextPageToken: "PASTE_PAGE_TOKEN_HERE_FROM_PREVIOUS_RESPONSE"
                 }
             }, null, 2);
-        });
+        }
         
-        document.getElementById('advancedSearchExample').addEventListener('click', () => {
+        function advancedSearchExample() {
             // Search events for the next 30 days
             const now = new Date();
             const thirtyDaysLater = new Date();
@@ -963,22 +1064,73 @@
                     maxResults: 20
                 }
             }, null, 2);
-        });
+        }
         
         // Recurring events examples
-        document.getElementById('listRecurringInstancesExample').addEventListener('click', () => {
-            document.getElementById('requestBody').value = JSON.stringify({
-                action: "list_recurring_instances",
-                parameters: {
-                    calendarId: "primary",
-                    eventId: "RECURRING_EVENT_ID_HERE", // User needs to replace with actual event ID
-                    timeMin: new Date().toISOString(),
-                    maxResults: 25
+        function listRecurringInstancesExample() {
+            // First check if we can find a recurring event
+            fetch('/mcp/execute', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: "list_events",
+                    parameters: {
+                        calendarId: "primary",
+                        timeMin: new Date().toISOString(),
+                        maxResults: 50
+                    }
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                let eventId = "RECURRING_EVENT_ID_HERE";
+                
+                // If we got events, look for a recurring one
+                if (data.status === 'success' && data.data && data.data.events && data.data.events.length > 0) {
+                    // Try to find a recurring event
+                    const recurringEvent = data.data.events.find(event => event.recurrence || event.isRecurringEvent);
+                    
+                    if (recurringEvent) {
+                        eventId = recurringEvent.id;
+                        console.log("Found recurring event ID:", eventId);
+                    } else {
+                        console.log("No recurring events found");
+                    }
                 }
-            }, null, 2);
-        });
+                
+                // Update the request body
+                document.getElementById('requestBody').value = JSON.stringify({
+                    action: "list_recurring_instances",
+                    parameters: {
+                        calendarId: "primary",
+                        eventId: eventId,
+                        timeMin: new Date().toISOString(),
+                        maxResults: 25
+                    }
+                }, null, 2);
+                
+                // If we're using the placeholder, show a warning
+                if (eventId === "RECURRING_EVENT_ID_HERE") {
+                    document.getElementById('response').textContent = "No recurring events found. Please create a recurring event first or replace RECURRING_EVENT_ID_HERE with a valid recurring event ID.";
+                }
+            })
+            .catch(error => {
+                console.error("Error getting events:", error);
+                document.getElementById('requestBody').value = JSON.stringify({
+                    action: "list_recurring_instances",
+                    parameters: {
+                        calendarId: "primary",
+                        eventId: "RECURRING_EVENT_ID_HERE", // User needs to replace with actual event ID
+                        timeMin: new Date().toISOString(),
+                        maxResults: 25
+                    }
+                }, null, 2);
+                
+                document.getElementById('response').textContent = "⚠️ Please replace RECURRING_EVENT_ID_HERE with a valid recurring event ID from your calendar.";
+            });
+        }
         
-        document.getElementById('createRecurringEventExample').addEventListener('click', () => {
+        function createRecurringEventExample() {
             const tomorrow = new Date();
             tomorrow.setDate(tomorrow.getDate() + 1);
             tomorrow.setHours(10, 0, 0, 0);
@@ -1006,9 +1158,9 @@
                     ]
                 }
             }, null, 2);
-        });
+        }
         
-        document.getElementById('createEventExceptionExample').addEventListener('click', () => {
+        function createEventExceptionExample() {
             // Date should be the date of an instance of a recurring event
             const instanceDate = new Date();
             instanceDate.setDate(instanceDate.getDate() + 7); // A week from now
@@ -1045,9 +1197,9 @@
                     }
                 }
             }, null, 2);
-        });
+        }
         
-        document.getElementById('deleteEventInstanceExample').addEventListener('click', () => {
+        function deleteEventInstanceExample() {
             // Date should be the date of an instance of a recurring event
             const instanceDate = new Date();
             instanceDate.setDate(instanceDate.getDate() + 14); // Two weeks from now
@@ -1061,10 +1213,10 @@
                     originalStartTime: instanceDate.toISOString()
                 }
             }, null, 2);
-        });
+        }
         
         // Webhook examples
-        document.getElementById('createWebhookExample').addEventListener('click', () => {
+        function createWebhookExample() {
             document.getElementById('requestBody').value = JSON.stringify({
                 action: "manage_webhooks",
                 parameters: {
@@ -1072,18 +1224,18 @@
                     address: "https://your-server.com/webhook/calendar"
                 }
             }, null, 2);
-        });
+        }
         
-        document.getElementById('listWebhooksExample').addEventListener('click', () => {
+        function listWebhooksExample() {
             document.getElementById('requestBody').value = JSON.stringify({
                 action: "manage_webhooks",
                 parameters: {
                     operation: "list"
                 }
             }, null, 2);
-        });
+        }
         
-        document.getElementById('deleteWebhookExample').addEventListener('click', () => {
+        function deleteWebhookExample() {
             document.getElementById('requestBody').value = JSON.stringify({
                 action: "manage_webhooks",
                 parameters: {
@@ -1091,9 +1243,9 @@
                     webhookId: "WEBHOOK_ID_HERE" // User needs to replace with actual webhook ID
                 }
             }, null, 2);
-        });
+        }
         
-        document.getElementById('eventWithRemindersExample').addEventListener('click', () => {
+        function eventWithRemindersExample() {
             const tomorrow = new Date();
             tomorrow.setDate(tomorrow.getDate() + 1);
             tomorrow.setHours(14, 0, 0, 0);
@@ -1126,9 +1278,9 @@
                     }
                 }
             }, null, 2);
-        });
+        }
         
-        document.getElementById('batchCreateEventsExample').addEventListener('click', () => {
+        function batchCreateEventsExample() {
             const tomorrow = new Date();
             tomorrow.setDate(tomorrow.getDate() + 1);
             
@@ -1196,9 +1348,9 @@
                     ]
                 }
             }, null, 2);
-        });
+        }
         
-        document.getElementById('batchEventActionsExample').addEventListener('click', () => {
+        function batchEventActionsExample() {
             document.getElementById('requestBody').value = JSON.stringify({
                 action: "batch_operations",
                 parameters: {
@@ -1225,9 +1377,9 @@
                     ]
                 }
             }, null, 2);
-        });
+        }
         
-        document.getElementById('detectConflictsExample').addEventListener('click', () => {
+        function detectConflictsExample() {
             // Create a proposed event time (tomorrow at 10 AM)
             const tomorrow = new Date();
             tomorrow.setDate(tomorrow.getDate() + 1);
@@ -1255,9 +1407,9 @@
                     checkAttendees: true
                 }
             }, null, 2);
-        });
+        }
         
-        document.getElementById('createEventWithConflictCheckExample').addEventListener('click', () => {
+        function createEventWithConflictCheckExample() {
             // Create a proposed event time (tomorrow at 10 AM)
             const tomorrow = new Date();
             tomorrow.setDate(tomorrow.getDate() + 1);
@@ -1290,11 +1442,15 @@
                     allowConflicts: false  // Will fail if conflicts are found
                 }
             }, null, 2);
-        });
+        }
         
-        document.getElementById('executeAction').addEventListener('click', async () => {
+        // Execute the action specified in the request body
+        async function executeAction() {
+            console.log("Execute button clicked");
             try {
                 const requestBody = document.getElementById('requestBody').value;
+                console.log("Sending request:", requestBody);
+                
                 const response = await fetch('/mcp/execute', {
                     method: 'POST',
                     headers: {
@@ -1302,11 +1458,16 @@
                     },
                     body: requestBody
                 });
+                
+                console.log("Response received, status:", response.status);
                 const data = await response.json();
+                console.log("Response data:", data);
+                
                 document.getElementById('response').textContent = JSON.stringify(data, null, 2);
                 
                 // If not authenticated, provide a link
                 if (data.status === 'error' && data.error_type === 'authentication_error' && data.auth_url) {
+                    console.log("Authentication required, showing login link");
                     // Show authentication alert if not already shown
                     if (!document.querySelector('.login-alert')) {
                         const alertHtml = `
@@ -1321,9 +1482,10 @@
                     }
                 }
             } catch (error) {
+                console.error("Error executing action:", error);
                 document.getElementById('response').textContent = `Error: ${error.message}`;
             }
-        });
+        }
     </script>
 </body>
 </html>
