@@ -46,6 +46,27 @@ If you find this project useful, consider supporting the developer:
 
 5. Open http://localhost:3000 in your browser and authorize the application with Google.
 
+## Connecting to Claude
+
+To use this MCP server with Claude:
+
+1. Start the server using `npm start`
+2. Add the following MCP configuration to Claude:
+
+```json
+{
+  "name": "Google Calendar MCP",
+  "version": "1.0.0",
+  "description": "MCP server for Google Calendar access",
+  "url": "http://localhost:3000",
+  "mcpProtocolVersion": "0.1"
+}
+```
+
+3. In Claude settings, go to Model Context Protocol > Add MCP server
+4. Enter the details above (or import a JSON file with these contents)
+5. Claude will now be able to manage your Google Calendar
+
 ## MCP Endpoints
 
 - `/mcp/definition` - GET endpoint that returns the capabilities of this MCP server
