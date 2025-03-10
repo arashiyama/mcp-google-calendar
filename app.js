@@ -46,7 +46,8 @@ const ErrorTypes = {
   API_ERROR: 'api_error',
   SERVER_ERROR: 'server_error',
   RATE_LIMIT: 'rate_limit_exceeded',
-  CSRF: 'csrf_error'
+  CSRF: 'csrf_error',
+  SCHEDULING_CONFLICT: 'scheduling_conflict'
 };
 
 // Define API key authentication middleware
@@ -248,7 +249,9 @@ app.get('/mcp/definition', (req, res) => {
           recurrence: "Array of RRULE strings for recurring events (optional, e.g. ['RRULE:FREQ=DAILY;COUNT=5'])",
           attendees: "Array of attendee email addresses (optional)",
           reminders: "Reminder settings with useDefault and overrides array (optional)",
-          sendUpdates: "Preference for sending email updates (optional, 'all', 'externalOnly', or 'none')"
+          sendUpdates: "Preference for sending email updates (optional, 'all', 'externalOnly', or 'none')",
+          checkConflicts: "Whether to check for scheduling conflicts (defaults to true)",
+          allowConflicts: "Whether to allow creation despite conflicts (defaults to false)"
         },
         response: {
           status: "success or error",
@@ -284,7 +287,9 @@ app.get('/mcp/definition', (req, res) => {
           location: "New event location (optional)",
           recurrence: "Array of RRULE strings for recurring events (optional, e.g. ['RRULE:FREQ=DAILY;COUNT=5'])",
           attendees: "Array of attendee email addresses (optional)",
-          sendUpdates: "Preference for sending email updates (optional, 'all', 'externalOnly', or 'none')"
+          sendUpdates: "Preference for sending email updates (optional, 'all', 'externalOnly', or 'none')",
+          checkConflicts: "Whether to check for scheduling conflicts (defaults to true)",
+          allowConflicts: "Whether to allow update despite conflicts (defaults to false)"
         },
         response: {
           status: "success or error",
@@ -364,6 +369,29 @@ app.get('/mcp/definition', (req, res) => {
         },
         required_parameters: []
       },
+      detect_conflicts: {
+        description: "Detect scheduling conflicts for a proposed event",
+        parameters: {
+          calendarId: "ID of the calendar to use (defaults to 'primary')",
+          start: "Proposed event start time (required)",
+          end: "Proposed event end time (required)",
+          eventId: "ID of current event if updating (to exclude from conflict check)",
+          attendees: "Array of attendee email addresses to check for conflicts",
+          checkAttendees: "Whether to consider attendee conflicts (default: true)"
+        },
+        response: {
+          status: "success or error",
+          data: {
+            hasConflicts: "Boolean indicating if conflicts were found",
+            timeConflicts: "Array of events that overlap in time",
+            attendeeConflicts: "Array of events with conflicting attendees",
+            summary: "Summary of conflict counts"
+          },
+          error: "Error message (if failed)",
+          error_type: "Type of error that occurred (if failed)"
+        },
+        required_parameters: ["start", "end"]
+      },
       create_event_exception: {
         description: "Create an exception to a specific instance of a recurring event",
         parameters: {
@@ -424,7 +452,8 @@ app.get('/mcp/definition', (req, res) => {
       validation_error: "Required parameters are missing or invalid",
       not_found_error: "Requested resource was not found",
       api_error: "Error occurred in the Google Calendar API",
-      server_error: "Unexpected server-side error"
+      server_error: "Unexpected server-side error",
+      scheduling_conflict: "A scheduling conflict was detected with existing events"
     },
     authentication: {
       type: "oauth2",
@@ -676,6 +705,81 @@ app.post('/mcp/execute', [
         result = await advancedSearchEvents(calendar, parameters || {});
         break;
         
+      case 'detect_conflicts':
+        // Validate required parameters
+        validationError = validateParams(parameters, ['start', 'end']);
+        if (validationError) {
+          return res.json({
+            status: 'error',
+            error_type: ErrorTypes.VALIDATION,
+            error: validationError
+          });
+        }
+        
+        // Validate date formats
+        if (parameters.start) {
+          try {
+            if (typeof parameters.start === 'object' && parameters.start.dateTime) {
+              new Date(parameters.start.dateTime);
+            } else if (typeof parameters.start === 'object' && parameters.start.date) {
+              new Date(parameters.start.date);
+            } else {
+              throw new Error('Invalid format');
+            }
+          } catch (e) {
+            return res.json({
+              status: 'error',
+              error_type: ErrorTypes.VALIDATION,
+              error: 'Invalid start time format. Use ISO 8601 format in a dateTime or date property.'
+            });
+          }
+        }
+        
+        if (parameters.end) {
+          try {
+            if (typeof parameters.end === 'object' && parameters.end.dateTime) {
+              new Date(parameters.end.dateTime);
+            } else if (typeof parameters.end === 'object' && parameters.end.date) {
+              new Date(parameters.end.date);
+            } else {
+              throw new Error('Invalid format');
+            }
+          } catch (e) {
+            return res.json({
+              status: 'error',
+              error_type: ErrorTypes.VALIDATION,
+              error: 'Invalid end time format. Use ISO 8601 format in a dateTime or date property.'
+            });
+          }
+        }
+        
+        // Validate attendees if provided
+        if (parameters.attendees && !Array.isArray(parameters.attendees)) {
+          return res.json({
+            status: 'error',
+            error_type: ErrorTypes.VALIDATION,
+            error: 'attendees must be an array of email addresses'
+          });
+        }
+        
+        // Execute conflict detection
+        result = await detectEventConflicts(calendar, parameters);
+        
+        // If no conflicts, return an appropriate response
+        if (!result) {
+          result = {
+            hasConflicts: false,
+            timeConflicts: [],
+            attendeeConflicts: [],
+            summary: {
+              timeConflictsCount: 0,
+              attendeeConflictsCount: 0
+            }
+          };
+        }
+        
+        break;
+        
       case 'create_event_exception':
         // Validate required parameters
         validationError = validateParams(parameters, ['recurringEventId', 'originalStartTime']);
@@ -734,6 +838,7 @@ app.post('/mcp/execute', [
     let errorType = ErrorTypes.SERVER_ERROR;
     let errorMessage = error.message || 'An unexpected error occurred';
     let statusCode = 500;
+    let additionalData = null;
     
     if (error.code === 404) {
       errorType = ErrorTypes.NOT_FOUND;
@@ -745,6 +850,14 @@ app.post('/mcp/execute', [
       // Handle 400 Bad Request specifically
       errorType = ErrorTypes.VALIDATION;
       statusCode = 400;
+    } else if (error.code === 409 || error.code === 'CONFLICT') {
+      // Handle scheduling conflicts
+      errorType = ErrorTypes.SCHEDULING_CONFLICT;
+      statusCode = 409;
+      errorMessage = 'Scheduling conflict detected';
+      if (error.conflicts) {
+        additionalData = error.conflicts;
+      }
     } else if (error.code === 429) {
       // Handle rate limit errors
       errorType = ErrorTypes.RATE_LIMIT;
@@ -766,11 +879,18 @@ app.post('/mcp/execute', [
       }
     }
     
-    return res.status(statusCode).json({
+    const response = {
       status: 'error',
       error_type: errorType,
       error: errorMessage
-    });
+    };
+    
+    // Add conflict data if available
+    if (additionalData) {
+      response.conflicts = additionalData;
+    }
+    
+    return res.status(statusCode).json(response);
   }
 });
 
@@ -1113,9 +1233,24 @@ async function listEvents(calendar, {
  * Create a new calendar event
  * @param {Object} calendar - Google Calendar API client
  * @param {Object} params - Event parameters
+ * @param {boolean} [params.checkConflicts=true] - Whether to check for conflicts
+ * @param {boolean} [params.allowConflicts=false] - Whether to allow creation despite conflicts
  * @returns {Object} Created event details
  */
-async function createEvent(calendar, { calendarId = 'primary', summary, description, start, end, location, recurrence, attendees, reminders, sendUpdates }) {
+async function createEvent(calendar, { 
+  calendarId = 'primary', 
+  summary, 
+  description, 
+  start, 
+  end, 
+  location, 
+  recurrence, 
+  attendees, 
+  reminders, 
+  sendUpdates,
+  checkConflicts = true,
+  allowConflicts = false
+}) {
   try {
     // Validate date formats
     if (start && typeof start === 'object' && start.dateTime) {
@@ -1131,6 +1266,26 @@ async function createEvent(calendar, { calendarId = 'primary', summary, descript
         new Date(end.dateTime);
       } catch (e) {
         throw new Error('Invalid end.dateTime format. Use ISO 8601 format.');
+      }
+    }
+    
+    // Check for scheduling conflicts if required
+    if (checkConflicts) {
+      const conflicts = await detectEventConflicts(calendar, {
+        calendarId,
+        start,
+        end,
+        attendees: attendees || [],
+        checkAttendees: true,
+        warningOnly: allowConflicts
+      });
+      
+      // If conflicts found and not allowed to proceed with conflicts
+      if (conflicts && !allowConflicts) {
+        const error = new Error('Scheduling conflict detected');
+        error.conflicts = conflicts;
+        error.code = 'CONFLICT';
+        throw error;
       }
     }
     
@@ -1183,6 +1338,15 @@ async function createEvent(calendar, { calendarId = 'primary', summary, descript
     };
   } catch (error) {
     console.error('Error creating event:', error);
+    
+    // Rethrow conflict errors with proper formatting
+    if (error.code === 'CONFLICT') {
+      const formattedError = new Error('Scheduling conflict detected');
+      formattedError.conflicts = error.conflicts;
+      formattedError.code = 409; // HTTP Conflict status code
+      throw formattedError;
+    }
+    
     throw error;
   }
 }
@@ -1238,9 +1402,24 @@ async function getEvent(calendar, { calendarId = 'primary', eventId }) {
  * Update an existing calendar event
  * @param {Object} calendar - Google Calendar API client
  * @param {Object} params - Parameters for updating the event
+ * @param {boolean} [params.checkConflicts=true] - Whether to check for conflicts
+ * @param {boolean} [params.allowConflicts=false] - Whether to allow creation despite conflicts
  * @returns {Object} Updated event details
  */
-async function updateEvent(calendar, { calendarId = 'primary', eventId, summary, description, start, end, location, recurrence, attendees, sendUpdates }) {
+async function updateEvent(calendar, { 
+  calendarId = 'primary', 
+  eventId, 
+  summary, 
+  description, 
+  start, 
+  end, 
+  location, 
+  recurrence, 
+  attendees, 
+  sendUpdates,
+  checkConflicts = true,
+  allowConflicts = false
+}) {
   try {
     if (!eventId) {
       throw new Error('Event ID is required');
@@ -1303,6 +1482,29 @@ async function updateEvent(calendar, { calendarId = 'primary', eventId, summary,
       }
     }
     
+    // Check for scheduling conflicts if required and time or attendees have changed
+    if (checkConflicts && (start !== undefined || end !== undefined || attendees !== undefined)) {
+      const conflictParams = {
+        calendarId,
+        eventId, // Include the current event ID to exclude it from conflict check
+        start: start || eventUpdate.start,
+        end: end || eventUpdate.end,
+        attendees: attendees || eventUpdate.attendees || [],
+        checkAttendees: true,
+        warningOnly: allowConflicts
+      };
+      
+      const conflicts = await detectEventConflicts(calendar, conflictParams);
+      
+      // If conflicts found and not allowed to proceed with conflicts
+      if (conflicts && !allowConflicts) {
+        const error = new Error('Scheduling conflict detected');
+        error.conflicts = conflicts;
+        error.code = 'CONFLICT';
+        throw error;
+      }
+    }
+    
     // Prepare request parameters
     const requestParams = {
       calendarId: calendarId,
@@ -1339,6 +1541,14 @@ async function updateEvent(calendar, { calendarId = 'primary', eventId, summary,
     // Handle specific error cases
     if (error.code === 404) {
       throw new Error(`Event not found with ID: ${eventId} in calendar: ${calendarId}`);
+    }
+    
+    // Rethrow conflict errors with proper formatting
+    if (error.code === 'CONFLICT') {
+      const formattedError = new Error('Scheduling conflict detected');
+      formattedError.conflicts = error.conflicts;
+      formattedError.code = 409; // HTTP Conflict status code
+      throw formattedError;
     }
     
     throw error;
@@ -2552,6 +2762,151 @@ async function manageWebhooks(calendar, { operation, address, webhookId }) {
   }
 }
 
+/**
+ * Detect scheduling conflicts for a proposed event
+ * @param {Object} calendar - Google Calendar API client
+ * @param {Object} params - Parameters for conflict detection
+ * @param {string} params.calendarId - ID of the calendar to check
+ * @param {Object} params.start - Proposed event start time
+ * @param {Object} params.end - Proposed event end time
+ * @param {string} [params.eventId] - ID of current event if updating (to exclude from conflict check)
+ * @param {Array} [params.attendees] - Attendees of the proposed event
+ * @param {boolean} [params.checkAttendees=true] - Whether to consider attendee conflicts
+ * @param {boolean} [params.warningOnly=false] - If true, conflicts will be returned as warnings instead of errors
+ * @returns {Promise<Object>} Object containing conflicts or null if no conflicts
+ */
+async function detectEventConflicts(calendar, { 
+  calendarId = 'primary',
+  start,
+  end,
+  eventId,
+  attendees = [],
+  checkAttendees = true,
+  warningOnly = false
+}) {
+  try {
+    // Validate parameters
+    if (!start || !end) {
+      throw new Error('Start and end times are required for conflict detection');
+    }
+    
+    // Parse the event times
+    const eventStart = new Date(start.dateTime || start.date);
+    const eventEnd = new Date(end.dateTime || end.date);
+    
+    // Validate time order
+    if (eventEnd <= eventStart) {
+      throw new Error('End time must be after start time');
+    }
+    
+    // Query for potentially conflicting events
+    const response = await calendar.events.list({
+      calendarId: calendarId,
+      timeMin: eventStart.toISOString(),
+      timeMax: new Date(eventEnd.getTime() + 1000 * 60 * 60).toISOString(), // Add 1 hour buffer
+      singleEvents: true, // Expand recurring events
+      maxResults: 100,
+    });
+    
+    if (!response.data.items || response.data.items.length === 0) {
+      return null; // No events found, no conflicts
+    }
+    
+    const conflicts = {
+      timeConflicts: [],
+      attendeeConflicts: [],
+      hasConflicts: false
+    };
+    
+    // Helper to check time overlap
+    const isTimeOverlap = (event1Start, event1End, event2Start, event2End) => {
+      return (event1Start < event2End && event1End > event2Start);
+    };
+    
+    // Process each event to check for conflicts
+    for (const existingEvent of response.data.items) {
+      // Skip comparing with self (for updates)
+      if (eventId && existingEvent.id === eventId) {
+        continue;
+      }
+      
+      // Skip canceled events
+      if (existingEvent.status === 'cancelled') {
+        continue;
+      }
+      
+      // Parse existing event times
+      const existingStart = new Date(existingEvent.start.dateTime || existingEvent.start.date);
+      const existingEnd = new Date(existingEvent.end.dateTime || existingEvent.end.date);
+      
+      // Check for time overlap
+      if (isTimeOverlap(eventStart, eventEnd, existingStart, existingEnd)) {
+        conflicts.timeConflicts.push({
+          id: existingEvent.id,
+          summary: existingEvent.summary || 'Untitled',
+          start: existingEvent.start,
+          end: existingEvent.end,
+          conflictType: 'time_overlap'
+        });
+        
+        conflicts.hasConflicts = true;
+      }
+      
+      // Check for attendee conflicts if requested
+      if (checkAttendees && existingEvent.attendees && attendees.length > 0) {
+        const conflictingAttendees = [];
+        
+        // Convert attendees to emails only for easier comparison
+        const proposedAttendeeEmails = attendees.map(a => 
+          typeof a === 'string' ? a.toLowerCase() : a.email.toLowerCase()
+        );
+        
+        const existingAttendeeEmails = existingEvent.attendees.map(a => 
+          a.email.toLowerCase()
+        );
+        
+        // Find common attendees
+        for (const email of proposedAttendeeEmails) {
+          if (existingAttendeeEmails.includes(email)) {
+            conflictingAttendees.push(email);
+          }
+        }
+        
+        // If we found conflicting attendees and there's a time overlap
+        if (conflictingAttendees.length > 0 && isTimeOverlap(eventStart, eventEnd, existingStart, existingEnd)) {
+          conflicts.attendeeConflicts.push({
+            id: existingEvent.id,
+            summary: existingEvent.summary || 'Untitled',
+            start: existingEvent.start,
+            end: existingEvent.end,
+            conflictingAttendees,
+            conflictType: 'attendee_double_booking'
+          });
+          
+          conflicts.hasConflicts = true;
+        }
+      }
+    }
+    
+    // Return null if no conflicts found
+    if (!conflicts.hasConflicts) {
+      return null;
+    }
+    
+    // Add summary info
+    conflicts.summary = {
+      timeConflictsCount: conflicts.timeConflicts.length,
+      attendeeConflictsCount: conflicts.attendeeConflicts.length,
+      warningOnly: warningOnly
+    };
+    
+    return conflicts;
+  } catch (error) {
+    console.error('Error detecting event conflicts:', error);
+    throw error;
+  }
+}
+
 module.exports = { 
   app, 
   validateParams, 
@@ -2569,5 +2924,6 @@ module.exports = {
   advancedSearchEvents,
   createEventException,
   deleteEventInstance,
-  manageWebhooks
+  manageWebhooks,
+  detectEventConflicts
 };
