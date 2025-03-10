@@ -50,7 +50,7 @@ If you find this project useful, consider supporting the developer:
 
 To use this MCP server with Claude:
 
-1. Claude will start the server automatically using the npx command below
+1. Claude will start the server automatically using the shell script command
 2. Add the following MCP configuration to Claude:
 
 ```json
@@ -59,8 +59,7 @@ To use this MCP server with Claude:
     "googleCalendar": {
       "name": "Google Calendar MCP",
       "version": "1.0.0",
-      "command": "npx",
-      "args": ["--yes", "serve-mcp", "--port=3000", "--path=/Users/jonc/code/mcp-google-calendar"],
+      "command": "/Users/jonc/code/mcp-google-calendar/start-mcp.sh",
       "description": "MCP server for Google Calendar access",
       "url": "http://localhost:3000",
       "mcpProtocolVersion": "0.1"
