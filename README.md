@@ -55,11 +55,15 @@ To use this MCP server with Claude:
 
 ```json
 {
-  "name": "Google Calendar MCP",
-  "version": "1.0.0",
-  "description": "MCP server for Google Calendar access",
-  "url": "http://localhost:3000",
-  "mcpProtocolVersion": "0.1"
+  "mcpServers": {
+    "googleCalendar": {
+      "name": "Google Calendar MCP",
+      "version": "1.0.0",
+      "description": "MCP server for Google Calendar access",
+      "url": "http://localhost:3000",
+      "mcpProtocolVersion": "0.1"
+    },
+  }
 }
 ```
 
