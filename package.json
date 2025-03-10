@@ -7,6 +7,14 @@
     "start": "node index.js",
     "dev": "nodemon index.js",
     "test": "jest",
+    "test:auth": "jest auth",
+    "test:api": "jest api",
+    "test:db": "jest db",
+    "test:batch": "jest batch",
+    "test:duplicates": "jest duplicates",
+    "test:validation": "jest validation",
+    "test:recurring": "jest recurring_exceptions",
+    "test:notifications": "jest notifications",
     "db:reset": "rm -f .token-store.db && node -e \"require('./db').initDatabase().then(() => console.log('Database reset successfully')).catch(err => console.error('Error resetting database:', err))\""
   },
   "dependencies": {
@@ -15,7 +23,11 @@
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
+    "express-rate-limit": "^7.5.0",
+    "express-validator": "^7.0.1",
     "googleapis": "^128.0.0",
+    "helmet": "^7.2.0",
+    "node-fetch": "^2.7.0",
     "sqlite3": "^5.1.7"
   },
   "devDependencies": {

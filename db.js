@@ -51,6 +51,68 @@ function initDatabase() {
           console.error('Error creating tokens table:', err);
           return reject(err);
         }
+      });
+      
+      // Create webhooks table
+      db.run(`
+        CREATE TABLE IF NOT EXISTS webhooks (
+          id TEXT PRIMARY KEY,
+          resource_id TEXT NOT NULL,
+          address TEXT NOT NULL,
+          expiration INTEGER NOT NULL,
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+      `, (err) => {
+        if (err) {
+          console.error('Error creating webhooks table:', err);
+          return reject(err);
+        }
+      });
+      
+      // Create sync tokens table
+      db.run(`
+        CREATE TABLE IF NOT EXISTS sync_tokens (
+          webhook_id TEXT PRIMARY KEY,
+          sync_token TEXT NOT NULL,
+          updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+      `, (err) => {
+        if (err) {
+          console.error('Error creating sync_tokens table:', err);
+          return reject(err);
+        }
+      });
+      
+      // Create reminders sent table
+      db.run(`
+        CREATE TABLE IF NOT EXISTS reminders_sent (
+          webhook_id TEXT NOT NULL,
+          event_id TEXT NOT NULL,
+          sent_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (webhook_id, event_id)
+        )
+      `, (err) => {
+        if (err) {
+          console.error('Error creating reminders_sent table:', err);
+          return reject(err);
+        }
+      });
+      
+      // Create API keys table
+      db.run(`
+        CREATE TABLE IF NOT EXISTS api_keys (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          key TEXT UNIQUE NOT NULL,
+          name TEXT NOT NULL,
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          expires_at TEXT,
+          is_active INTEGER DEFAULT 1
+        )
+      `, (err) => {
+        if (err) {
+          console.error('Error creating api_keys table:', err);
+          return reject(err);
+        }
         
         // Migrate tokens if needed
         if (shouldMigrate) {
@@ -257,11 +319,328 @@ function closeDatabase() {
   });
 }
 
+/**
+ * Save webhook information to the database
+ * @param {Object} webhook - The webhook object to save
+ * @returns {Promise<void>}
+ */
+function saveWebhook(webhook) {
+  return new Promise((resolve, reject) => {
+    if (!webhook || !webhook.id || !webhook.resourceId || !webhook.address || !webhook.expiration) {
+      return reject(new Error('Invalid webhook data'));
+    }
+
+    db.run(
+      'INSERT OR REPLACE INTO webhooks (id, resource_id, address, expiration) VALUES (?, ?, ?, ?)',
+      [webhook.id, webhook.resourceId, webhook.address, webhook.expiration],
+      (err) => {
+        if (err) {
+          return reject(err);
+        }
+        resolve();
+      }
+    );
+  });
+}
+
+/**
+ * Get webhook information from the database
+ * @param {string} id - The webhook ID
+ * @returns {Promise<Object|null>} The webhook object or null if not found
+ */
+function getWebhook(id) {
+  return new Promise((resolve, reject) => {
+    db.get('SELECT * FROM webhooks WHERE id = ?', [id], (err, row) => {
+      if (err) {
+        return reject(err);
+      }
+      
+      if (!row) {
+        return resolve(null);
+      }
+      
+      resolve({
+        id: row.id,
+        resourceId: row.resource_id,
+        address: row.address,
+        expiration: row.expiration,
+        createdAt: row.created_at
+      });
+    });
+  });
+}
+
+/**
+ * Get all webhooks from the database
+ * @returns {Promise<Object[]>} Array of webhook objects
+ */
+function getAllWebhooks() {
+  return new Promise((resolve, reject) => {
+    db.all('SELECT * FROM webhooks', (err, rows) => {
+      if (err) {
+        return reject(err);
+      }
+      
+      if (!rows || rows.length === 0) {
+        return resolve([]);
+      }
+      
+      const webhooks = rows.map(row => ({
+        id: row.id,
+        resourceId: row.resource_id,
+        address: row.address,
+        expiration: row.expiration,
+        createdAt: row.created_at
+      }));
+      
+      resolve(webhooks);
+    });
+  });
+}
+
+/**
+ * Delete a webhook from the database
+ * @param {string} id - The webhook ID
+ * @returns {Promise<void>}
+ */
+function deleteWebhook(id) {
+  return new Promise((resolve, reject) => {
+    db.run('DELETE FROM webhooks WHERE id = ?', [id], (err) => {
+      if (err) {
+        return reject(err);
+      }
+      
+      // Also delete associated sync tokens and reminders
+      db.run('DELETE FROM sync_tokens WHERE webhook_id = ?', [id]);
+      db.run('DELETE FROM reminders_sent WHERE webhook_id = ?', [id]);
+      
+      resolve();
+    });
+  });
+}
+
+/**
+ * Save a sync token for a webhook
+ * @param {string} webhookId - The webhook ID
+ * @param {string} syncToken - The sync token
+ * @returns {Promise<void>}
+ */
+function saveSyncToken(webhookId, syncToken) {
+  return new Promise((resolve, reject) => {
+    db.run(
+      'INSERT OR REPLACE INTO sync_tokens (webhook_id, sync_token, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)',
+      [webhookId, syncToken],
+      (err) => {
+        if (err) {
+          return reject(err);
+        }
+        resolve();
+      }
+    );
+  });
+}
+
+/**
+ * Get a sync token for a webhook
+ * @param {string} webhookId - The webhook ID
+ * @returns {Promise<string|null>} The sync token or null if not found
+ */
+function getSyncToken(webhookId) {
+  return new Promise((resolve, reject) => {
+    db.get('SELECT sync_token FROM sync_tokens WHERE webhook_id = ?', [webhookId], (err, row) => {
+      if (err) {
+        return reject(err);
+      }
+      
+      resolve(row ? row.sync_token : null);
+    });
+  });
+}
+
+/**
+ * Delete a sync token for a webhook
+ * @param {string} webhookId - The webhook ID
+ * @returns {Promise<void>}
+ */
+function deleteSyncToken(webhookId) {
+  return new Promise((resolve, reject) => {
+    db.run('DELETE FROM sync_tokens WHERE webhook_id = ?', [webhookId], (err) => {
+      if (err) {
+        return reject(err);
+      }
+      resolve();
+    });
+  });
+}
+
+/**
+ * Save a record that a reminder was sent
+ * @param {string} webhookId - The webhook ID
+ * @param {string} eventId - The event ID
+ * @returns {Promise<void>}
+ */
+function saveReminderSent(webhookId, eventId) {
+  return new Promise((resolve, reject) => {
+    db.run(
+      'INSERT OR REPLACE INTO reminders_sent (webhook_id, event_id) VALUES (?, ?)',
+      [webhookId, eventId],
+      (err) => {
+        if (err) {
+          return reject(err);
+        }
+        resolve();
+      }
+    );
+  });
+}
+
+/**
+ * Get list of event IDs that have had reminders sent
+ * @param {string} webhookId - The webhook ID
+ * @returns {Promise<string[]>} Array of event IDs
+ */
+function getRemindersSent(webhookId) {
+  return new Promise((resolve, reject) => {
+    db.all('SELECT event_id FROM reminders_sent WHERE webhook_id = ?', [webhookId], (err, rows) => {
+      if (err) {
+        return reject(err);
+      }
+      
+      resolve(rows ? rows.map(row => row.event_id) : []);
+    });
+  });
+}
+
+/**
+ * Generate and save a new API key
+ * @param {string} name - Name or description for the API key
+ * @param {string} expiresAt - Optional expiration date (ISO string)
+ * @returns {Promise<Object>} The generated API key object
+ */
+function generateApiKey(name, expiresAt = null) {
+  return new Promise((resolve, reject) => {
+    if (!name) {
+      return reject(new Error('API key name is required'));
+    }
+
+    // Generate a random API key
+    const crypto = require('crypto');
+    const key = `mcp_${crypto.randomBytes(24).toString('hex')}`;
+    
+    // Save to database
+    db.run(
+      'INSERT INTO api_keys (key, name, expires_at) VALUES (?, ?, ?)',
+      [key, name, expiresAt],
+      function(err) {
+        if (err) {
+          return reject(err);
+        }
+        
+        resolve({
+          id: this.lastID,
+          key,
+          name,
+          expiresAt,
+          isActive: 1,
+          createdAt: new Date().toISOString()
+        });
+      }
+    );
+  });
+}
+
+/**
+ * Validate an API key
+ * @param {string} key - The API key to validate
+ * @returns {Promise<boolean>} True if the key is valid
+ */
+function validateApiKey(key) {
+  return new Promise((resolve, reject) => {
+    if (!key) {
+      return resolve(false);
+    }
+    
+    db.get(
+      'SELECT * FROM api_keys WHERE key = ? AND is_active = 1 AND (expires_at IS NULL OR expires_at > datetime("now"))',
+      [key],
+      (err, row) => {
+        if (err) {
+          return reject(err);
+        }
+        
+        resolve(Boolean(row));
+      }
+    );
+  });
+}
+
+/**
+ * List all API keys
+ * @returns {Promise<Array>} List of API key objects
+ */
+function listApiKeys() {
+  return new Promise((resolve, reject) => {
+    db.all(
+      'SELECT id, key, name, created_at, expires_at, is_active FROM api_keys',
+      (err, rows) => {
+        if (err) {
+          return reject(err);
+        }
+        
+        const keys = rows.map(row => ({
+          id: row.id,
+          key: row.key.substring(0, 10) + '...',  // Don't return full key for security
+          name: row.name,
+          createdAt: row.created_at,
+          expiresAt: row.expires_at,
+          isActive: Boolean(row.is_active)
+        }));
+        
+        resolve(keys);
+      }
+    );
+  });
+}
+
+/**
+ * Revoke (deactivate) an API key
+ * @param {number} id - The API key ID to revoke
+ * @returns {Promise<boolean>} True if successful
+ */
+function revokeApiKey(id) {
+  return new Promise((resolve, reject) => {
+    db.run(
+      'UPDATE api_keys SET is_active = 0 WHERE id = ?',
+      [id],
+      function(err) {
+        if (err) {
+          return reject(err);
+        }
+        
+        resolve(this.changes > 0);
+      }
+    );
+  });
+}
+
 // Export functions
 module.exports = {
   initDatabase,
   saveTokens,
   loadTokens,
   deleteTokens,
-  closeDatabase
+  closeDatabase,
+  saveWebhook,
+  getWebhook,
+  getAllWebhooks,
+  deleteWebhook,
+  saveSyncToken,
+  getSyncToken,
+  deleteSyncToken,
+  saveReminderSent,
+  getRemindersSent,
+  generateApiKey,
+  validateApiKey,
+  listApiKeys,
+  revokeApiKey
 };

@@ -1,0 +1,15 @@
+node_modules
+npm-debug.log
+.env
+.env.local
+.env.*.local
+.token-store.db
+.token-cache.json
+.git
+.github
+.vscode
+coverage
+*.md
+!README.md
+!LICENSE
+!COPYRIGHT.md
