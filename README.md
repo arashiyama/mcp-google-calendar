@@ -12,6 +12,12 @@ This is a Model Context Protocol (MCP) server implementation for Google Calendar
 - Webhook notifications for calendar changes
 - Database persistence for tokens and webhooks
 
+## Support the Project
+
+If you find this project useful, consider supporting the developer:
+
+[Buy Me A Coffee](https://buymeacoffee.com/jonathancare)
+
 ## Setup Instructions
 
 1. Create a Google Cloud project and enable the Google Calendar API:
