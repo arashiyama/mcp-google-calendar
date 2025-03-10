@@ -59,11 +59,12 @@ To use this MCP server with Claude:
     "googleCalendar": {
       "name": "Google Calendar MCP",
       "version": "1.0.0",
+      "command": "npm",
+      "args": ["start"],
       "description": "MCP server for Google Calendar access",
       "url": "http://localhost:3000",
-      "mcpProtocolVersion": "0.1",
-      "command": "npm start"
-    },
+      "mcpProtocolVersion": "0.1"
+    }
   }
 }
 ```
