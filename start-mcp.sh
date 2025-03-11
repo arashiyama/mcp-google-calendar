@@ -1,2 +1,2 @@
-#\!/bin/bash
-npm start
+#!/bin/bash
+node mcp-server.js

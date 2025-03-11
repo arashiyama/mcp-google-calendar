@@ -18,6 +18,7 @@
     "db:reset": "rm -f .token-store.db && node -e \"require('./db').initDatabase().then(() => console.log('Database reset successfully')).catch(err => console.error('Error resetting database:', err))\""
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.7.0",
     "bcrypt": "^5.1.1",
     "body-parser": "^1.20.2",
     "cors": "^2.8.5",

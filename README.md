@@ -30,6 +30,7 @@ If you find this project useful, consider supporting the developer:
 2. Install dependencies:
    ```
    npm install
+   npm install @modelcontextprotocol/sdk --save
    ```
 
 3. Update the `.env` file with your Google API credentials:
@@ -39,45 +40,57 @@ If you find this project useful, consider supporting the developer:
    GOOGLE_REDIRECT_URI=http://localhost:3000/auth/google/callback
    ```
 
-4. Start the server:
+4. Make the MCP server script executable:
    ```
-   npm start
+   chmod +x mcp-server.js
+   chmod +x start-mcp.sh
    ```
 
-5. Open http://localhost:3000 in your browser and authorize the application with Google.
+5. Start the MCP server:
+   ```
+   ./start-mcp.sh
+   ```
+
+6. Authentication will be handled through the MCP tools when you first use them.
 
 ## Connecting to Claude
 
 To use this MCP server with Claude:
 
-1. Claude will start the server automatically using the shell script command
-2. Add the following MCP configuration to Claude:
+1. Add the following MCP configuration to Claude's settings:
 
 ```json
 {
   "mcpServers": {
     "googleCalendar": {
-      "name": "Google Calendar MCP",
-      "version": "1.0.0",
-      "command": "/Users/jonc/code/mcp-google-calendar/start-mcp.sh",
-      "description": "MCP server for Google Calendar access",
-      "url": "http://localhost:3000",
-      "mcpProtocolVersion": "0.1"
+      "command": "node",
+      "args": ["/path/to/mcp-google-calendar/mcp-server.js"],
+      "env": {
+        "GOOGLE_CLIENT_ID": "your_client_id_here",
+        "GOOGLE_CLIENT_SECRET": "your_client_secret_here",
+        "GOOGLE_REDIRECT_URI": "http://localhost:3000/auth/google/callback"
+      },
+      "disabled": false,
+      "autoApprove": []
     }
   }
 }
 ```
 
-3. In Claude settings, go to Model Context Protocol > Add MCP server
-4. Enter the details above (or import a JSON file with these contents)
+2. Replace `/path/to/mcp-google-calendar/mcp-server.js` with the actual path to your mcp-server.js file
+3. Replace the Google API credentials with your own
+4. In Claude desktop app, go to Settings > MCP Servers, or in Claude web app, use the MCP configuration panel
 5. Claude will now be able to manage your Google Calendar
 
-## MCP Endpoints
+## MCP Tools
 
-- `/mcp/definition` - GET endpoint that returns the capabilities of this MCP server
-- `/mcp/execute` - POST endpoint for executing actions on Google Calendar
+This server provides the following MCP tools:
 
-## Supported Actions
+### Authentication Tools
+- `get_auth_url` - Get the URL for Google Calendar authentication
+- `check_auth_status` - Check if the user is authenticated with Google Calendar
+
+### Calendar Tools
 
 ### Core Calendar Operations
 - `list_calendars` - List all available calendars
@@ -102,33 +115,56 @@ To use this MCP server with Claude:
 
 All event-related actions support an optional `calendarId` parameter to work with different calendars. If not specified, the primary calendar is used by default.
 
-## Example Usage
+## Example Usage with MCP Tools
+
+When using this MCP server with Claude or other MCP-compatible assistants, you can use the tools directly. Here are some examples:
+
+### Authentication
+
+```
+// Get authentication URL
+use_mcp_tool(
+  server_name: "googleCalendar",
+  tool_name: "get_auth_url",
+  arguments: {}
+)
+
+// Check authentication status
+use_mcp_tool(
+  server_name: "googleCalendar",
+  tool_name: "check_auth_status",
+  arguments: {}
+)
+```
 
 ### List Calendars
-```json
-{
-  "action": "list_calendars",
-  "parameters": {}
-}
+```
+use_mcp_tool(
+  server_name: "googleCalendar",
+  tool_name: "list_calendars",
+  arguments: {}
+)
 ```
 
 ### List Events
-```json
-{
-  "action": "list_events",
-  "parameters": {
+```
+use_mcp_tool(
+  server_name: "googleCalendar",
+  tool_name: "list_events",
+  arguments: {
     "calendarId": "primary",
     "timeMin": "2023-01-01T00:00:00Z",
     "maxResults": 10
   }
-}
+)
 ```
 
 ### Create Event
-```json
-{
-  "action": "create_event",
-  "parameters": {
+```
+use_mcp_tool(
+  server_name: "googleCalendar",
+  tool_name: "create_event",
+  arguments: {
     "calendarId": "primary",
     "summary": "Team Meeting",
     "description": "Weekly team sync",
@@ -142,25 +178,27 @@ All event-related actions support an optional `calendarId` parameter to work wit
       "timeZone": "America/Los_Angeles"
     }
   }
-}
+)
 ```
 
 ### Get Event
-```json
-{
-  "action": "get_event",
-  "parameters": {
+```
+use_mcp_tool(
+  server_name: "googleCalendar",
+  tool_name: "get_event",
+  arguments: {
     "calendarId": "primary",
     "eventId": "event_id_here"
   }
-}
+)
 ```
 
 ### Update Event
-```json
-{
-  "action": "update_event",
-  "parameters": {
+```
+use_mcp_tool(
+  server_name: "googleCalendar",
+  tool_name: "update_event",
+  arguments: {
     "calendarId": "primary",
     "eventId": "event_id_here",
     "summary": "Updated Meeting Title",
@@ -175,122 +213,41 @@ All event-related actions support an optional `calendarId` parameter to work wit
       "timeZone": "America/Los_Angeles"
     }
   }
-}
+)
 ```
 
 ### Delete Event
-```json
-{
-  "action": "delete_event",
-  "parameters": {
+```
+use_mcp_tool(
+  server_name: "googleCalendar",
+  tool_name: "delete_event",
+  arguments: {
     "calendarId": "primary",
     "eventId": "event_id_here"
   }
-}
+)
 ```
 
 ### Find Duplicate Events
-```json
-{
-  "action": "find_duplicates",
-  "parameters": {
+```
+use_mcp_tool(
+  server_name: "googleCalendar",
+  tool_name: "find_duplicates",
+  arguments: {
     "calendarId": "primary",
     "timeMin": "2023-01-01T00:00:00Z",
     "timeMax": "2023-12-31T23:59:59Z",
     "similarityThreshold": 0.7
   }
-}
-```
-
-### List Recurring Instances
-```json
-{
-  "action": "list_recurring_instances",
-  "parameters": {
-    "calendarId": "primary",
-    "eventId": "recurring_event_id_here",
-    "timeMin": "2023-01-01T00:00:00Z",
-    "maxResults": 25
-  }
-}
-```
-
-### Create Event Exception
-```json
-{
-  "action": "create_event_exception",
-  "parameters": {
-    "calendarId": "primary",
-    "recurringEventId": "recurring_event_id_here",
-    "originalStartTime": "2023-01-15T09:00:00-07:00",
-    "summary": "Special Team Meeting",
-    "location": "Virtual Meeting Room",
-    "reminders": {
-      "useDefault": false,
-      "overrides": [
-        { "method": "email", "minutes": 30 },
-        { "method": "popup", "minutes": 15 }
-      ]
-    }
-  }
-}
-```
-
-### Delete Event Instance
-```json
-{
-  "action": "delete_event_instance",
-  "parameters": {
-    "calendarId": "primary",
-    "recurringEventId": "recurring_event_id_here",
-    "originalStartTime": "2023-01-22T09:00:00-07:00"
-  }
-}
-```
-
-### Batch Operations
-```json
-{
-  "action": "batch_operations",
-  "parameters": {
-    "operations": [
-      {
-        "action": "get_event",
-        "parameters": {
-          "calendarId": "primary",
-          "eventId": "event_id_1"
-        }
-      },
-      {
-        "action": "create_event",
-        "parameters": {
-          "summary": "New Event",
-          "start": {
-            "dateTime": "2023-02-15T10:00:00-07:00",
-            "timeZone": "America/Los_Angeles"
-          },
-          "end": {
-            "dateTime": "2023-02-15T11:00:00-07:00",
-            "timeZone": "America/Los_Angeles"
-          }
-        }
-      },
-      {
-        "action": "delete_event",
-        "parameters": {
-          "eventId": "event_id_2"
-        }
-      }
-    ]
-  }
-}
+)
 ```
 
 ### Advanced Search Events
-```json
-{
-  "action": "advanced_search_events",
-  "parameters": {
+```
+use_mcp_tool(
+  server_name: "googleCalendar",
+  tool_name: "advanced_search_events",
+  arguments: {
     "calendarId": "primary",
     "timeRange": {
       "start": "2023-01-01T00:00:00Z",
@@ -303,18 +260,19 @@ All event-related actions support an optional `calendarId` parameter to work wit
     "isRecurring": true,
     "maxResults": 50
   }
-}
+)
 ```
 
 ### Manage Webhooks
-```json
-{
-  "action": "manage_webhooks",
-  "parameters": {
+```
+use_mcp_tool(
+  server_name: "googleCalendar",
+  tool_name: "manage_webhooks",
+  arguments: {
     "operation": "create",
     "address": "https://your-server.com/webhook/calendar"
   }
-}
+)
 ```
 
 ## Webhook Notifications
@@ -324,7 +282,17 @@ This MCP server supports real-time notifications through webhooks. When events i
 ### Setting up Webhooks
 
 1. Create a publicly accessible HTTPS endpoint that can receive POST requests
-2. Register your endpoint using the `manage_webhooks` action with the "create" operation
+2. Register your endpoint using the `manage_webhooks` MCP tool:
+   ```
+   use_mcp_tool(
+     server_name: "googleCalendar",
+     tool_name: "manage_webhooks",
+     arguments: {
+       "operation": "create",
+       "address": "https://your-server.com/webhook/calendar"
+     }
+   )
+   ```
 3. Your server will start receiving notifications when calendar events change
 
 ### Webhook Notification Format

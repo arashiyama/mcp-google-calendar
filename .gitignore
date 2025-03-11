@@ -48,4 +48,8 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
-*.swoCLAUDE.md
+*.swo
+CLAUDE.md
+
+# Home directory symlinks or references
+~/
