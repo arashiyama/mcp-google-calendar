@@ -53,3 +53,5 @@ CLAUDE.md
 
 # Home directory symlinks or references
 ~/
+.aider.chat.history.md
+.aider.input.history
