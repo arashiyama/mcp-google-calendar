@@ -1,0 +1,39 @@
+{
+  "name": "mcp-google-calendar",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/arashiyama/mcp-google-calendar.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/arashiyama/mcp-google-calendar/issues"
+  },
+  "homepage": "https://github.com/arashiyama/mcp-google-calendar#readme",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.7.0",
+    "dotenv": "^16.4.7",
+    "google-auth-library": "^9.15.1",
+    "googleapis": "^146.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "typescript": "^5.8.2"
+  },
+  {
+    "type": "module",
+    "scripts": {
+      "build": "tsc",
+      "start": "node build/index.js"
+    }
+  }
+}
+
