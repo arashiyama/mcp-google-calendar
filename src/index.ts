@@ -7,6 +7,7 @@ import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { z } from 'zod';
 
 // Load environment variables
 dotenv.config();
@@ -52,12 +53,7 @@ server.tool(
   async () => {
     if (authenticated) {
       return {
-        content: [
-          {
-            type: "text",
-            text: "Already authenticated with Google Calendar."
-          }
-        ]
+        content: [{ type: "text", text: "Already authenticated with Google Calendar." }]
       };
     }
 
@@ -82,10 +78,7 @@ server.tool(
   "set-auth-code",
   "Set the authorization code from Google OAuth flow",
   {
-    code: {
-      type: "string",
-      description: "The authorization code from Google OAuth redirect"
-    }
+    code: z.string().describe("The authorization code from Google OAuth redirect")
   },
   async ({ code }) => {
     try {
@@ -97,12 +90,7 @@ server.tool(
       authenticated = true;
       
       return {
-        content: [
-          {
-            type: "text",
-            text: "Successfully authenticated with Google Calendar!"
-          }
-        ]
+        content: [{ type: "text", text: "Successfully authenticated with Google Calendar!" }]
       };
     } catch (error) {
       console.error('Error retrieving access token:', error);
@@ -124,18 +112,14 @@ server.tool(
   "list-events",
   "List upcoming calendar events",
   {
-    maxResults: {
-      type: "number",
-      description: "Maximum number of events to return (default: 10)",
-      default: 10
-    },
-    timeMin: {
-      type: "string",
-      description: "Start time in ISO format (default: now)",
-      default: new Date().toISOString()
-    }
+    maxResults: z.number()
+      .describe("Maximum number of events to return")
+      .default(10),
+    timeMin: z.string()
+      .describe("Start time in ISO format")
+      .default(() => new Date().toISOString())
   },
-  async ({ maxResults = 10, timeMin = new Date().toISOString() }) => {
+  async ({ maxResults, timeMin }) => {
     if (!authenticated) {
       return {
         content: [
@@ -161,12 +145,7 @@ server.tool(
       
       if (events.length === 0) {
         return {
-          content: [
-            {
-              type: "text",
-              text: "No upcoming events found."
-            }
-          ]
+          content: [{ type: "text", text: "No upcoming events found." }]
         };
       }
 
@@ -177,12 +156,7 @@ server.tool(
       }).join('\n---\n\n');
 
       return {
-        content: [
-          {
-            type: "text",
-            text: `Upcoming events:\n\n${formattedEvents}`
-          }
-        ]
+        content: [{ type: "text", text: `Upcoming events:\n\n${formattedEvents}` }]
       };
     } catch (error) {
       console.error('Error retrieving events:', error);
@@ -204,34 +178,21 @@ server.tool(
   "create-event",
   "Create a new calendar event",
   {
-    summary: {
-      type: "string",
-      description: "Event title/summary"
-    },
-    description: {
-      type: "string",
-      description: "Event description (optional)"
-    },
-    location: {
-      type: "string",
-      description: "Event location (optional)"
-    },
-    startDateTime: {
-      type: "string",
-      description: "Start date and time in ISO format or YYYY-MM-DD format"
-    },
-    endDateTime: {
-      type: "string",
-      description: "End date and time in ISO format or YYYY-MM-DD format"
-    },
-    attendees: {
-      type: "array",
-      description: "List of attendee email addresses (optional)",
-      items: {
-        type: "string"
-      },
-      default: []
-    }
+    summary: z.string()
+      .describe("Event title/summary"),
+    description: z.string()
+      .describe("Event description")
+      .optional(),
+    location: z.string()
+      .describe("Event location")
+      .optional(),
+    startDateTime: z.string()
+      .describe("Start date and time in ISO format (e.g., 2024-03-15T09:00:00Z) or YYYY-MM-DD format"),
+    endDateTime: z.string()
+      .describe("End date and time in ISO format (e.g., 2024-03-15T10:00:00Z) or YYYY-MM-DD format"),
+    attendees: z.array(z.string())
+      .describe("List of attendee email addresses")
+      .default([])
   },
   async ({ summary, description, location, startDateTime, endDateTime, attendees = [] }) => {
     if (!authenticated) {
@@ -247,23 +208,24 @@ server.tool(
     }
 
     try {
-      // Determine if the dates are full ISO datetimes or just dates
-      const isFullDay = !startDateTime.includes('T') && !endDateTime.includes('T');
-      
+      // Create event object
       const event: calendar_v3.Schema$Event = {
         summary,
         description,
         location,
-        start: isFullDay 
-          ? { date: startDateTime } 
-          : { dateTime: startDateTime, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
-        end: isFullDay 
-          ? { date: endDateTime } 
-          : { dateTime: endDateTime, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+        start: {
+          dateTime: startDateTime.includes('T') ? startDateTime : undefined,
+          date: !startDateTime.includes('T') ? startDateTime : undefined,
+        },
+        end: {
+          dateTime: endDateTime.includes('T') ? endDateTime : undefined,
+          date: !endDateTime.includes('T') ? endDateTime : undefined,
+        },
       };
 
-      if (attendees && attendees.length > 0) {
-        event.attendees = attendees.map(email => ({ email }));
+      // Add attendees if provided
+      if (attendees.length > 0) {
+        event.attendees = attendees.map((email: string) => ({ email }));
       }
 
       const response = await calendar.events.insert({
@@ -275,7 +237,7 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `Event created successfully! Event ID: ${response.data.id}\nEvent link: ${response.data.htmlLink}`
+            text: `Event created successfully! Event ID: ${response.data.id}`
           }
         ]
       };
@@ -299,10 +261,8 @@ server.tool(
   "delete-event",
   "Delete a calendar event by ID",
   {
-    eventId: {
-      type: "string",
-      description: "ID of the event to delete"
-    }
+    eventId: z.string()
+      .describe("ID of the event to delete")
   },
   async ({ eventId }) => {
     if (!authenticated) {
@@ -351,15 +311,11 @@ server.tool(
   "search-events",
   "Search for calendar events by query",
   {
-    query: {
-      type: "string",
-      description: "Search query (searches in title, description, location, etc.)"
-    },
-    maxResults: {
-      type: "number",
-      description: "Maximum number of events to return",
-      default: 10
-    }
+    query: z.string()
+      .describe("Search query (searches in title, description, location, etc.)"),
+    maxResults: z.number()
+      .describe("Maximum number of events to return")
+      .default(10)
   },
   async ({ query, maxResults = 10 }) => {
     if (!authenticated) {

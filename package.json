@@ -3,17 +3,19 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
+  "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "tsc",
+    "start": "node build/index.js"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/arashiyama/mcp-google-calendar.git"
   },
   "keywords": [],
-  "author": "",
+  "author": "Jonathan Care <jonc@lacunae.org>",
   "license": "ISC",
-  "type": "commonjs",
   "bugs": {
     "url": "https://github.com/arashiyama/mcp-google-calendar/issues"
   },
@@ -27,13 +29,6 @@
   "devDependencies": {
     "@types/node": "^22.13.10",
     "typescript": "^5.8.2"
-  },
-  {
-    "type": "module",
-    "scripts": {
-      "build": "tsc",
-      "start": "node build/index.js"
-    }
   }
 }
 
